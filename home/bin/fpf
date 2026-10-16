@@ -1,0 +1,22 @@
+#!/bin/bash
+
+# Capture the output of fzf with --print-query and any additional arguments
+output=$(fzf --print-query "$@")
+
+# Extract the query which is the first line of the output
+query=$(echo "$output" | head -n 1)
+
+# Extract the selection, which could be the second line if there's any
+selection=$(echo "$output" | sed -n '2p')
+
+# Check if the query ends with a semicolon
+if [[ "$query" =~ \;$ ]]; then
+  # If query ends with a semicolon, use the query regardless of the selection
+  selection="$query"
+elif [ -z "$selection" ]; then
+  # If no selection made, fallback to the query
+  selection="$query"
+fi
+
+# Print the final selection or the query
+echo "$selection"

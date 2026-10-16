@@ -1,0 +1,32 @@
+#!/bin/bash
+
+commit=HEAD
+break_all=0
+while true; do
+  parent=$(git rev-parse "$commit^")
+
+  for branch in $(git branch --format "%(refname:short)"); do
+    branch_head=$(git rev-parse "$branch")
+
+    if [ "$commit" == "$branch_head" ]; then
+      break_all=1
+      break;
+    fi
+    commit="$parent"
+  done
+
+  # Check if break_all flag is set - if so, break from the outer loop
+  if [ $break_all -eq 1 ]; then
+    break;
+  fi
+done
+
+filesChanged=$(git diff --name-only --diff-filter=ACMR $commit)
+
+IFS=$'\n'
+for file in $filesChanged
+do
+    echo "$file"
+done
+
+

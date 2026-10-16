@@ -1,0 +1,6 @@
+cask tailscale-app
+stow
+direnv
+atuin
+zoxide
+starship

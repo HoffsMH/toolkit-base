@@ -1,0 +1,3 @@
+# One sudo auth covers every terminal and agent shell for wheel users.
+Defaults:%wheel timestamp_type=global
+Defaults:%wheel timestamp_timeout=120

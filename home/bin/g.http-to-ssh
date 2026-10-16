@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+repo_url=$(git remote get-url origin 2>/dev/null || true)
+case "$repo_url" in
+  https://github.com/*/*)
+    repo_path=${repo_url#https://github.com/}
+    repo_path=${repo_path%.git}
+    ;;
+  *)
+    echo "-- ERROR: origin is not an HTTPS GitHub repository."
+    echo "   It may already use SSH or a different host."
+    exit 1
+    ;;
+esac
+
+ssh_host=${GIT_SSH_HOST:-github.com}
+new_url="git@${ssh_host}:${repo_path}"
+
+echo "Changing repo url from"
+echo "  '$repo_url'"
+echo "      to"
+echo "  '$new_url'"
+echo
+
+git remote set-url origin "$new_url"
+echo "Success"

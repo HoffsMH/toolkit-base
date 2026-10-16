@@ -1,0 +1,5 @@
+tailscale
+stow
+zsh
+direnv
+atuin

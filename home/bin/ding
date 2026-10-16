@@ -1,0 +1,12 @@
+#!/bin/bash
+
+ding=~/.config/ding1.mp3
+count=${1:-1}
+
+echo "$ding"
+
+for i in $(seq $count);
+do
+  mpv "$ding" --volume=190 > /dev/null 2>&1
+done
+

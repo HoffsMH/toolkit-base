@@ -1,0 +1,247 @@
+#!/bin/bash
+
+if [ "${1:-}" = "--help" ] || [ "${1:-}" = "-h" ]; then
+  printf 'Usage: %s\n\nAudit HOME symlinks into infra and links.set dotfile candidates.\n' "${0##*/}"
+  exit 0
+elif [ $# -gt 0 ]; then
+  printf 'Usage: %s\n' "${0##*/}" >&2
+  exit 2
+fi
+
+if [ -d "$HOME/infra" ]; then
+  infradir="$HOME/infra"
+elif [ -d "/opt/infra" ]; then
+  infradir="/opt/infra"
+else
+  printf 'Error: infra directory not found in %s or /opt/infra\n' "$HOME" >&2
+  exit 1
+fi
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  green=$'\033[32m'
+  yellow=$'\033[33m'
+  cyan=$'\033[36m'
+  red=$'\033[31m'
+  bold=$'\033[1m'
+  dim=$'\033[2m'
+  reset=$'\033[0m'
+else
+  green=""
+  yellow=""
+  cyan=""
+  red=""
+  bold=""
+  dim=""
+  reset=""
+fi
+
+normalize_path() {
+  local path="$1"
+  local part count
+  local -a input output
+
+  IFS='/' read -r -a input <<< "$path"
+  for part in "${input[@]}"; do
+    case "$part" in
+      ""|.) ;;
+      ..)
+        count=${#output[@]}
+        [ "$count" -gt 0 ] && unset "output[$((count - 1))]"
+        ;;
+      *) output+=("$part") ;;
+    esac
+  done
+
+  printf '/'
+  if [ "${#output[@]}" -gt 0 ]; then
+    local joined
+    IFS='/'; joined="${output[*]}"; unset IFS
+    printf '%s' "$joined"
+  fi
+}
+
+resolve_link_target() {
+  local link="$1"
+  local raw candidate
+
+  raw=$(readlink "$link") || return 1
+  if [[ "$raw" = /* ]]; then
+    candidate="$raw"
+  else
+    candidate="$(dirname "$link")/$raw"
+  fi
+
+  if [ "$realpath_m" = true ]; then
+    realpath -m "$candidate"
+  else
+    normalize_path "$candidate"
+  fi
+}
+
+print_row() {
+  local color="$1"
+  local marker="$2"
+  local label="$3"
+  local subject="$4"
+  local detail="$5"
+
+  printf '  %s%-8s %-13s%s %s%s%s' \
+    "$color" "$marker" "$label" "$reset" "$dim" "$subject" "$reset"
+  [ -n "$detail" ] && printf ' -> %s' "$detail"
+  printf '\n'
+}
+
+# Dotfile layers under assets/workstation/, least specific first. Arch-family
+# Linux gets linux-arch; Omarchy adds its own layer on top of that.
+read -r os_id os_like < <(
+  ID= ID_LIKE=
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+  elif [ -f /usr/lib/os-release ]; then
+    . /usr/lib/os-release
+  fi
+  printf '%s %s\n' "$ID" "$ID_LIKE"
+)
+
+layers=(common)
+if [ "$(uname)" = "Darwin" ]; then
+  layers+=(mac)
+elif [ "$(uname)" = "Linux" ] && [[ " $os_id $os_like " = *" arch "* ]]; then
+  layers+=(linux-arch)
+  [ "$os_id" = omarchy ] && layers+=(omarchy)
+else
+  printf 'Unsupported platform: %s %s\n' "$(uname)" "$os_id" >&2
+  exit 1
+fi
+
+realpath_m=false
+if command -v realpath >/dev/null 2>&1 && realpath -m / >/dev/null 2>&1; then
+  realpath_m=true
+fi
+
+infra_root=$(normalize_path "$infradir")
+find_errors=$(mktemp "${TMPDIR:-/tmp}/links.scan.XXXXXX") || exit 1
+scan_status_pid=""
+
+stop_scan_status() {
+  if [ -n "$scan_status_pid" ]; then
+    kill "$scan_status_pid" 2>/dev/null || true
+    wait "$scan_status_pid" 2>/dev/null || true
+    printf '\r\033[K' >&2
+    scan_status_pid=""
+  fi
+}
+
+cleanup() {
+  stop_scan_status
+  command rm -f -- "$find_errors"
+}
+
+trap cleanup EXIT
+
+healthy=0
+dangling=0
+current=0
+ready=0
+needs_force=0
+link=""
+target=""
+dangling_findings=()
+
+printf '%slinks.scan%s  %s%s%s\n' "$bold" "$reset" "$dim" "$HOME" "$reset"
+printf '\n%sSymlinks into infra%s\n' "$bold" "$reset"
+
+if [ -t 2 ]; then
+  (
+    elapsed=0
+    while :; do
+      sleep 5
+      ((elapsed += 5))
+      printf '\r\033[K  %sScanning all of HOME... %ds elapsed%s' \
+        "$dim" "$elapsed" "$reset" >&2
+    done
+  ) &
+  scan_status_pid=$!
+fi
+
+while IFS= read -r -d '' link; do
+  target=$(resolve_link_target "$link") || continue
+  case "$target" in
+    "$infra_root"|"$infra_root"/*)
+      if [ -e "$link" ]; then
+        print_row "$green" "[OK]" "healthy" "$link" "$target"
+        ((healthy += 1))
+      else
+        print_row "$red" "[BROKEN]" "dangling" "$link" "$target"
+        dangling_findings+=("$link -> $target")
+        ((dangling += 1))
+      fi
+      ;;
+  esac
+done < <(find "$HOME" -type l -print0 2> "$find_errors")
+
+stop_scan_status
+printf '  %sScan complete.%s\n' "$dim" "$reset"
+
+scan_dotfiles() {
+  local source_dir="$1"
+  local section="$2"
+  local source source_parent relative target target_parent resolved
+
+  printf '\n%s%s candidates%s %s%s%s\n' \
+    "$bold" "$section" "$reset" "$dim" "$source_dir" "$reset"
+
+  while IFS= read -r -d '' source; do
+    source_parent=$(dirname "$source")
+    relative=${source_parent#"$source_dir"}
+    target_parent="$HOME$relative"
+    target="$target_parent/$(basename "$source")"
+
+    if [ -L "$target" ]; then
+      resolved=$(resolve_link_target "$target") || resolved=""
+      if [ "$resolved" = "$(normalize_path "$source")" ] && [ -e "$target" ]; then
+        print_row "$green" "[OK]" "current" "$source" "$target"
+        ((current += 1))
+      else
+        print_row "$yellow" "[FORCE]" "would replace" "$source" "$target"
+        ((needs_force += 1))
+      fi
+    elif [ -e "$target" ]; then
+      print_row "$yellow" "[FORCE]" "would replace" "$source" "$target"
+      ((needs_force += 1))
+    else
+      print_row "$cyan" "[READY]" "would link" "$source" "$target"
+      ((ready += 1))
+    fi
+  done < <(find "$source_dir" -type f -print0)
+}
+
+for layer in "${layers[@]}"; do
+  layer_dir="$infradir/assets/workstation/$layer/dotfiles"
+  [ -d "$layer_dir" ] && scan_dotfiles "$layer_dir" "$layer"
+done
+
+scan_errors=0
+if [ -s "$find_errors" ]; then
+  scan_errors=$(wc -l < "$find_errors")
+fi
+
+printf '\n%sSummary%s\n' "$bold" "$reset"
+if [ "$dangling" -gt 0 ] || [ "$scan_errors" -gt 0 ]; then
+  for finding in "${dangling_findings[@]}"; do
+    printf '  %s[BROKEN]%s %s\n' "$red" "$reset" "$finding"
+  done
+  while IFS= read -r warning; do
+    printf '  %s[WARN]%s %s\n' "$red" "$reset" "$warning"
+  done < "$find_errors"
+else
+  printf '  %sNo broken links or scan errors.%s\n' "$green" "$reset"
+fi
+
+printf '\n%sTotals%s\n' "$bold" "$reset"
+printf '  %s[OK]     healthy links   %d%s\n' "$green" "$healthy" "$reset"
+printf '  %s[BROKEN] dangling links  %d%s\n' "$red" "$dangling" "$reset"
+printf '  %s[OK]     current files   %d%s\n' "$green" "$current" "$reset"
+printf '  %s[READY]  without force   %d%s\n' "$cyan" "$ready" "$reset"
+printf '  %s[FORCE]  requires force  %d%s\n' "$yellow" "$needs_force" "$reset"
+printf '  %s[WARN]   scan errors     %d%s\n' "$red" "$scan_errors" "$reset"

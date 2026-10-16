@@ -1,0 +1,19 @@
+TAILSCALE: MANUAL STEPS
+=======================
+
+1. Log this machine in to the tailnet:
+     sudo tailscale up
+   Choose "Sign in with a passkey" and touch the YubiKey. Tailscale allows
+   one passkey per user, so each YubiKey has its own Tailscale user.
+
+2. In the admin console (https://login.tailscale.com/admin/dns),
+   make sure MagicDNS is on, so "closet" resolves.
+
+3. Check the tailnet:
+     ~/infra/toolkits/base/verify.d/tailscale.sh
+
+4. Bring in the other toolkits. Every toolkit lives at
+   ~/infra/toolkits/<name>; base came from GitHub, the rest come from
+   closet (first clone asks to accept closet's host key, then a touch):
+     git clone git@closet:toolkits/<name>.git ~/infra/toolkits/<name>
+   then install each one.

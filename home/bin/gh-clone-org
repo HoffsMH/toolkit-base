@@ -1,0 +1,114 @@
+#!/usr/bin/env bash
+# gh-clone-org — clone every non-archived repo in a GitHub org.
+#
+# Usage: gh-clone-org <org> <dest-dir>
+#
+# Examples:
+#   gh-clone-org my-org ~/code/my-org
+#   gh-clone-org other-org .
+#
+# Idempotent: repos already cloned at <dest-dir>/<repo-name> are skipped.
+# Safe to re-run after interruption (YubiKey timeout, laptop sleep,
+# transient network). Partial clones from a failed attempt are cleaned
+# up so the retry starts fresh.
+#
+# Fails gracefully:
+#   - preflight checks all runtime deps; exits early if any are missing
+#   - exits early if `gh` is not authenticated
+#   - per-repo clone failures are logged and do not stop the script
+#   - prints a summary at the end; exits non-zero if anything failed
+#
+# Runtime deps: gh, git, bash 3.2+. Portable across macOS and Linux.
+
+set -u
+set -o pipefail
+
+usage() {
+  echo "Usage: $(basename "$0") <org> <dest-dir>" >&2
+  echo "" >&2
+  echo "Clones every non-archived repo in <org> into <dest-dir>/<repo-name>." >&2
+  echo "Skips repos already cloned. Safe to re-run." >&2
+  exit 2
+}
+
+[[ $# -eq 2 ]] || usage
+org="$1"
+dest="$2"
+
+# Preflight: every runtime dep must be on PATH.
+required_cmds=(gh git)
+missing_cmds=()
+for cmd in "${required_cmds[@]}"; do
+  command -v "$cmd" >/dev/null 2>&1 || missing_cmds+=("$cmd")
+done
+if [[ ${#missing_cmds[@]} -gt 0 ]]; then
+  echo "error: missing required command(s) on PATH: ${missing_cmds[*]}" >&2
+  echo "       install the above and re-run." >&2
+  exit 1
+fi
+
+if ! gh auth status >/dev/null 2>&1; then
+  echo "error: gh is not authenticated. Run: gh auth login" >&2
+  exit 1
+fi
+
+if ! mkdir -p "$dest"; then
+  echo "error: cannot create destination: $dest" >&2
+  exit 1
+fi
+
+echo "Listing non-archived repos in $org..."
+repos=()
+while IFS= read -r name; do
+  [[ -n "$name" ]] && repos+=("$name")
+done < <(gh repo list "$org" --limit 1000 --no-archived --json name --jq '.[].name' 2>/dev/null)
+
+if [[ ${#repos[@]} -eq 0 ]]; then
+  echo "error: no repos returned for org '$org' (no access, or org has no non-archived repos)" >&2
+  exit 1
+fi
+
+echo "Found ${#repos[@]} repos in $org."
+echo ""
+
+cloned=0
+skipped=0
+failed=0
+failed_list=()
+
+for name in "${repos[@]}"; do
+  target="$dest/$name"
+
+  if [[ -d "$target/.git" ]]; then
+    echo "  skip   $name (already cloned)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  if [[ -e "$target" ]]; then
+    echo "  skip   $name (path exists but is not a git repo — leaving alone)"
+    skipped=$((skipped + 1))
+    continue
+  fi
+
+  echo "  clone  $name"
+  if gh repo clone "$org/$name" "$target" >/dev/null 2>&1; then
+    cloned=$((cloned + 1))
+  else
+    echo "         FAILED (auth, ssh, or network) — cleaning partial clone" >&2
+    [[ -e "$target" ]] && rm -rf "$target"
+    failed=$((failed + 1))
+    failed_list+=("$name")
+  fi
+done
+
+echo ""
+echo "Summary: $cloned cloned, $skipped skipped, $failed failed."
+if [[ $failed -gt 0 ]]; then
+  echo ""
+  echo "Failed repos:"
+  printf '  %s\n' "${failed_list[@]}"
+  echo ""
+  echo "Re-run the same command to retry failed clones."
+  exit 1
+fi

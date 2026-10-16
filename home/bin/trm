@@ -1,0 +1,29 @@
+#!/bin/bash
+# Eventually ... My tool that:
+#   - makes a tar file containing the folder or file
+#   - encrypts that tar file and shreds original tar file
+#   - puts that encrypted tar file in a iso date named folder in ~/.trash
+#   - puts a shell script that restores the file to its original location if you have gpg unlock
+#     - doesn't even attempt to restore if there is a file or folder in the restore files place
+
+# Check if arguments are provided
+if [ $# -eq 0 ]; then
+  echo "Usage: trm <file_or_directory>..."
+  exit 1
+fi
+
+# Show the total size of the files/directories
+echo "Calculating total size..."
+du -chs "$@"
+
+# Ask for confirmation once
+read -p "Are you sure you want to delete these files? (y/n) " ans
+if [[ "$ans" != "y" ]]; then
+  echo "Aborting deletion."
+  exit 1
+fi
+
+# Delete files/directories recursively **without prompting for each one**
+\rm -r "$@"
+
+echo "Deletion complete."

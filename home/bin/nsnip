@@ -1,0 +1,55 @@
+#!/bin/bash
+
+# nsnip [category] — compose a NEW text snip in your editor, then save it.
+#
+# Where `snip` captures whatever is already on the clipboard, nsnip opens a blank
+# temp file in nvim (text-editor config) so you can write the note first. On save
+# and quit it is content-addressed with the same timestamp + sha256 scheme as
+# `snip` and dropped into ~/personal/00-cap-md/snip-<category>:
+#   nsnip          -> ~/personal/00-cap-md/snip-main
+#   nsnip prompt   -> ~/personal/00-cap-md/snip-prompt   (auto-created if absent)
+# An empty note (nothing but whitespace) is discarded. Browse with `usnip`.
+#
+# Requirements: nvim (text-editor config), sha256sum, fd, and the ~/bin/iso-str
+# and `notify` helpers — same as `snip`.
+
+# Target directory for this category (auto-created on first use).
+category="${1:-main}"
+dir="$HOME/personal/00-cap-md/snip-${category}"
+mkdir -p "$dir"
+
+# Scratch file to compose in (kept private; removed on exit).
+# Portable template: GNU and BSD mktemp both require explicit X's. A bare
+# `-t nsnip` works on BSD/macOS but errors on GNU/Linux, leaving $tmpdir empty
+# and $tmp pointing at /snip.md (unwritable root).
+tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/nsnip.XXXXXXXX") || exit 1
+trap 'rm -rf "$tmpdir"' EXIT
+tmp="$tmpdir/snip.md"
+
+# Compose. Use the same text-editor nvim config as usnip / the `et` alias.
+nvim "$tmp" -u "$HOME/.config/nvim/lua/text-editor.lua"
+
+# Discard if the note is empty or whitespace-only.
+if [[ ! -f "$tmp" ]] || ! grep -q '[^[:space:]]' "$tmp"; then
+    notify 'nsnip' 'Empty note — nothing saved.'
+    echo "Empty note — nothing saved."
+    exit 0
+fi
+
+# Content-address it (same scheme as snip's text branch).
+date=$($HOME/bin/iso-str)
+shasum=$(sha256sum "$tmp" | awk '{print $1}')
+filename="${date}-${shasum}.md"
+path="${dir}/${filename}"
+
+# Skip if an identical note (same sha) already exists in this category.
+matching_file=$(fd "$shasum" "$dir")
+
+if [[ -n "$matching_file" ]]; then
+    notify 'nsnip' 'A file with the same sha sum already exists. Not creating a new file.'
+    echo "A file with the same sha sum already exists. Not creating a new file."
+else
+    cp "$tmp" "$path"
+    notify "New file $path created."
+    echo "New file $path created."
+fi

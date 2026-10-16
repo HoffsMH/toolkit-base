@@ -1,0 +1,41 @@
+#!/bin/bash
+# prune_empty_dirs_find.sh
+# Usage: ./prune_empty_dirs_find.sh /path/to/directory
+
+# Check if a directory was provided.
+if [ -z "$1" ]; then
+    echo "Usage: $0 <directory>"
+    exit 1
+fi
+
+TARGET_DIR="$1"
+
+# Verify that the target is a directory.
+if [ ! -d "$TARGET_DIR" ]; then
+    echo "Error: '$TARGET_DIR' is not a directory."
+    exit 1
+fi
+
+# Count the empty directories.
+EMPTY_COUNT=$(find "$TARGET_DIR" -depth -type d -empty | wc -l)
+echo "Found $EMPTY_COUNT empty directories in '$TARGET_DIR'."
+
+# Exit if there are no empty directories.
+if [ "$EMPTY_COUNT" -eq 0 ]; then
+    echo "No empty directories to delete."
+    exit 0
+fi
+
+# Prompt for confirmation.
+read -p "Do you want to delete these empty directories? [y/N] " CONFIRM
+
+if [[ ! "$CONFIRM" =~ ^[Yy]$ ]]; then
+    echo "Aborted deletion."
+    exit 0
+fi
+
+# Delete empty directories, printing each deleted directory.
+echo "Deleting empty directories:"
+find "$TARGET_DIR" -depth -type d -empty -print -delete
+
+echo "Empty directories pruned."

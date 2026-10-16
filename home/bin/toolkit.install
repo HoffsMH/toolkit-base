@@ -1,0 +1,73 @@
+#!/usr/bin/env bash
+# Install one toolkit from $TOOLKITS_DIR/<name>: packages, home links, root
+# files, setup.d, then verify.d, then NEXT.txt last so it stays on screen.
+# Safe to rerun. A failing verify.d is reported, not fatal, since NEXT.txt
+# usually holds the manual steps it is waiting on.
+set -euo pipefail
+
+toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
+name=${1:?usage: toolkit.install <toolkit>}
+tk=$toolkits_dir/$name
+[ -d "$tk" ] || { echo "toolkit.install: no $tk" >&2; exit 1; }
+
+say() { printf '\n== %s: %s\n' "$name" "$*"; }
+
+lines() { [ -f "$1" ] && grep -v '^\s*\(#\|$\)' "$1" || true; }
+
+install_packages() {
+  local pkgs
+  if [ "$(uname)" = Darwin ]; then
+    lines "$tk/packages/brew.txt" | while read -r a b; do
+      if [ "$a" = cask ]; then brew install --cask "$b"; else brew install "$a"; fi
+    done
+    return
+  fi
+  pkgs=$(lines "$tk/packages/pacman.txt")
+  # shellcheck disable=SC2086
+  [ -z "$pkgs" ] || sudo pacman -S --needed --noconfirm $pkgs
+  pkgs=$(lines "$tk/packages/aur.txt")
+  # shellcheck disable=SC2086
+  [ -z "$pkgs" ] || yay -S --needed --noconfirm $pkgs
+}
+
+# Root files are copied, never linked: a root config linked into a repo this
+# user can write would let this user change root config.
+install_root_files() {
+  local f dst mode
+  while IFS= read -r -d '' f; do
+    dst=/${f#"$tk/root/"}
+    mode=644
+    [ -x "$f" ] && mode=755
+    [[ $dst == /etc/sudoers.d/* ]] && mode=440
+    if sudo cmp -s "$f" "$dst" 2>/dev/null; then continue; fi
+    if [[ $dst == /etc/sudoers.d/* ]] && ! sudo visudo -cqf "$f"; then
+      echo "toolkit.install: $f fails visudo, not installed" >&2
+      return 1
+    fi
+    sudo install -D -o root -g root -m "$mode" "$f" "$dst"
+    echo "installed $dst"
+  done < <(find "$tk/root" -type f -print0)
+}
+
+if [ -d "$tk/packages" ]; then say packages; install_packages; fi
+if [ -d "$tk/home" ]; then say links; links.set -b "$name"; fi
+if [ -d "$tk/root" ]; then say "root files"; install_root_files; fi
+
+for s in "$tk"/setup.d/*.sh; do
+  [ -e "$s" ] || continue
+  say "setup ${s##*/}"
+  bash "$s"
+done
+
+verify_failed=0
+for s in "$tk"/verify.d/*.sh; do
+  [ -e "$s" ] || continue
+  say "verify ${s##*/}"
+  bash "$s" || verify_failed=1
+done
+
+if [ -f "$tk/NEXT.txt" ]; then
+  printf '\n'
+  cat "$tk/NEXT.txt"
+fi
+[ $verify_failed -eq 0 ] || printf '\n%s: some checks failed; see verify output above.\n' "$name"

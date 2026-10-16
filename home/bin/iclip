@@ -1,0 +1,173 @@
+#!/bin/bash
+
+# iclip — agnostic image clipboard helper (companion to `uclip` for text).
+#
+# Usage:
+#   iclip type          print an image extension (e.g. "png") if the clipboard
+#                       currently holds an image; exit 1 if it does not.
+#   iclip save <file>   write the clipboard image to <file>.
+#   iclip copy <file>   load <file> into the clipboard as an image.
+#   iclip doctor        show backend checks and the selected backend.
+#
+# Platform support mirrors `uclip`: Wayland (wl-*), X11 (xclip), macOS (osascript).
+#
+# Requirements / fresh-machine setup (only the current platform's tools needed):
+#   Wayland: wl-clipboard        (provides wl-paste / wl-copy)
+#   X11:     xclip
+#   macOS:   osascript + sips    (both ship with macOS — nothing to install)
+
+set -euo pipefail
+
+die() { echo "iclip: $*" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if [[ ! -r "$script_dir/clipboard-backend" ]]; then
+    script_path=${BASH_SOURCE[0]}
+    while [[ -L "$script_path" ]]; do
+        link=$(readlink "$script_path")
+        [[ "$link" == /* ]] && script_path=$link || script_path=$(dirname "$script_path")/$link
+    done
+    script_dir=$(cd -- "$(dirname -- "$script_path")" && pwd -P)
+fi
+[[ -r "$script_dir/clipboard-backend" ]] || die "clipboard backend detector not found"
+# shellcheck source=clipboard-backend
+source "$script_dir/clipboard-backend"
+detect_clipboard_backend || true
+backend=$CLIPBOARD_BACKEND
+
+backend_unavailable() {
+    die "$backend clipboard backend unavailable"
+}
+
+# Print the offered MIME types; print nothing for an empty clipboard.
+wayland_types() {
+    local out
+    if ! out=$(wayland_clipboard_command wl-paste --list-types 2>&1); then
+        [[ "$out" == *"Nothing is copied"* ]] && return 0
+        backend_unavailable
+    fi
+    printf '%s\n' "$out"
+}
+
+no_backend() {
+    clipboard_detection_report >&2
+    die "no clipboard backend available"
+}
+
+# ---- type -----------------------------------------------------------------
+img_type() {
+    if [[ "$backend" == "wayland" ]]; then
+        local types
+        command -v wl-paste >/dev/null 2>&1 || backend_unavailable
+        types=$(wayland_types) || exit 1
+        case "$types" in
+            *image/png*)  echo png ;;
+            *image/jpeg*) echo jpg ;;
+            *image/gif*)  echo gif ;;
+            *image/*)     echo png ;;
+            *) exit 1 ;;
+        esac
+    elif [[ "$backend" == "x11" ]]; then
+        local targets
+        command -v xclip >/dev/null 2>&1 || backend_unavailable
+        targets=$(xclip -selection clipboard -t TARGETS -o 2>/dev/null) || backend_unavailable
+        case "$targets" in
+            *image/png*)  echo png ;;
+            *image/jpeg*) echo jpg ;;
+            *image/gif*)  echo gif ;;
+            *image/*)     echo png ;;
+            *) exit 1 ;;
+        esac
+    elif [[ "$backend" == "macos" ]]; then
+        # macOS: the pasteboard advertises PNGf / TIFF for image content.
+        local info
+        command -v osascript >/dev/null 2>&1 || backend_unavailable
+        info=$(osascript -e 'clipboard info' 2>/dev/null) || backend_unavailable
+        case "$info" in
+            *PNGf*|*TIFF*) echo png ;;   # normalized to png on save
+            *) exit 1 ;;
+        esac
+    else
+        no_backend
+    fi
+}
+
+# ---- save -----------------------------------------------------------------
+img_save() {
+    local out="$1"
+    [[ -n "$out" ]] || die "save needs an output path"
+    if [[ "$backend" == "wayland" ]]; then
+        command -v wl-paste >/dev/null 2>&1 || backend_unavailable
+        local types t
+        types=$(wayland_types) || exit 1
+        t=$(grep -m1 '^image/' <<< "$types" || true)
+        [[ -n "$t" ]] || die "no image on clipboard"
+        wayland_clipboard_command wl-paste --type "$t" > "$out" || backend_unavailable
+    elif [[ "$backend" == "x11" ]]; then
+        command -v xclip >/dev/null 2>&1 || backend_unavailable
+        local targets t
+        targets=$(xclip -selection clipboard -t TARGETS -o 2>/dev/null) || backend_unavailable
+        t=$(grep -m1 '^image/' <<< "$targets" || true)
+        [[ -n "$t" ]] || die "no image on clipboard"
+        xclip -selection clipboard -t "$t" -o > "$out" || backend_unavailable
+    elif [[ "$backend" == "macos" ]]; then
+        # macOS: prefer a direct PNG; fall back to TIFF -> sips -> PNG.
+        command -v osascript >/dev/null 2>&1 || backend_unavailable
+        if ! osascript - "$out" >/dev/null 2>&1 <<'OSA'
+on run argv
+    set outPath to item 1 of argv
+    set theData to (the clipboard as «class PNGf»)
+    set fh to open for access (POSIX file outPath) with write permission
+    set eof fh to 0
+    write theData to fh
+    close access fh
+end run
+OSA
+        then
+            local tiff; tiff=$(mktemp -t iclip).tiff
+            osascript - "$tiff" >/dev/null 2>&1 <<'OSA' || { rm -f "$tiff"; die "no image on clipboard"; }
+on run argv
+    set outPath to item 1 of argv
+    set theData to (the clipboard as «class TIFF»)
+    set fh to open for access (POSIX file outPath) with write permission
+    set eof fh to 0
+    write theData to fh
+    close access fh
+end run
+OSA
+            sips -s format png "$tiff" --out "$out" >/dev/null 2>&1 || { rm -f "$tiff"; die "could not convert clipboard image"; }
+            rm -f "$tiff"
+        fi
+    else
+        no_backend
+    fi
+}
+
+# ---- copy -----------------------------------------------------------------
+img_copy() {
+    local in="$1"
+    [[ -n "$in" && -f "$in" ]] || die "copy needs an existing file"
+    if [[ "$backend" == "wayland" ]]; then
+        command -v wl-copy >/dev/null 2>&1 || backend_unavailable
+        wayland_clipboard_command wl-copy --type image/png < "$in" || backend_unavailable
+    elif [[ "$backend" == "x11" ]]; then
+        command -v xclip >/dev/null 2>&1 || backend_unavailable
+        xclip -selection clipboard -t image/png -i "$in" || backend_unavailable
+    elif [[ "$backend" == "macos" ]]; then
+        command -v osascript >/dev/null 2>&1 || backend_unavailable
+        osascript -e 'on run argv' \
+                  -e 'set the clipboard to (read (POSIX file (item 1 of argv)) as «class PNGf»)' \
+                  -e 'end run' "$in" >/dev/null
+    else
+        no_backend
+    fi
+}
+
+cmd="${1:-}"
+case "$cmd" in
+    type) img_type ;;
+    save) img_save "${2:-}" ;;
+    copy) img_copy "${2:-}" ;;
+    doctor) clipboard_detection_report ;;
+    *) die "usage: iclip {type|save <file>|copy <file>|doctor}" ;;
+esac

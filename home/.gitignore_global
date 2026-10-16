@@ -1,0 +1,58 @@
+# User-specific tool version files
+.tool-versions
+
+# Editor / IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Personal notes
+.notes/
+TODO.local.md
+
+# Pi coding agent local settings
+.pi/
+
+# Claude Code local settings
+.claude/
+
+# Lavish agent artifacts
+.lavish/
+
+# Build and dependency output, carried over from the mac list
+/dist
+/tmp
+/node_modules
+/bower_components
+/.sass-cache
+/connect.lock
+/coverage/*
+/libpeerconnection.log
+/**/.DS_Store
+/test_reports
+.__babel_tmp
+.direnv/*
+/dumb.rdb
+
+# Project scratch and logs, carried over from the mac list
+secret.yml
+testlog**
+test.log
+db_dump.bak
+npm-debug.log
+testem.log
+.envrc
+yarn-error.log
+.ruby-version
+shell.nix
+flake.nix
+flake.lock
+.crush/
+CRUSH.md
+.claude/settings.local.json

@@ -1,0 +1,186 @@
+#!/bin/bash
+
+apply=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --apply) apply=true ;;
+    --dry-run|-n) apply=false ;;
+    --help|-h)
+      printf 'Usage: %s [--apply]\n\n' "${0##*/}"
+      printf 'Find dangling symlinks into infra. Dry-run is the default.\n'
+      printf 'Use --apply to remove the reported symlinks.\n'
+      exit 0
+      ;;
+    *)
+      printf 'Usage: %s [--apply]\n' "${0##*/}" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [ -d "$HOME/infra" ]; then
+  infradir="$HOME/infra"
+elif [ -d "/opt/infra" ]; then
+  infradir="/opt/infra"
+else
+  printf 'Error: infra directory not found in %s or /opt/infra\n' "$HOME" >&2
+  exit 1
+fi
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  yellow=$'\033[33m'
+  magenta=$'\033[35m'
+  red=$'\033[31m'
+  bold=$'\033[1m'
+  dim=$'\033[2m'
+  reset=$'\033[0m'
+else
+  yellow=""
+  magenta=""
+  red=""
+  bold=""
+  dim=""
+  reset=""
+fi
+
+normalize_path() {
+  local path="$1"
+  local part count
+  local -a input output
+
+  IFS='/' read -r -a input <<< "$path"
+  for part in "${input[@]}"; do
+    case "$part" in
+      ""|.) ;;
+      ..)
+        count=${#output[@]}
+        [ "$count" -gt 0 ] && unset "output[$((count - 1))]"
+        ;;
+      *) output+=("$part") ;;
+    esac
+  done
+
+  printf '/'
+  if [ "${#output[@]}" -gt 0 ]; then
+    local joined
+    IFS='/'; joined="${output[*]}"; unset IFS
+    printf '%s' "$joined"
+  fi
+}
+
+resolve_link_target() {
+  local link="$1"
+  local raw candidate
+
+  raw=$(readlink "$link") || return 1
+  if [[ "$raw" = /* ]]; then
+    candidate="$raw"
+  else
+    candidate="$(dirname "$link")/$raw"
+  fi
+
+  if [ "$realpath_m" = true ]; then
+    realpath -m "$candidate"
+  else
+    normalize_path "$candidate"
+  fi
+}
+
+scan_status_pid=""
+
+stop_scan_status() {
+  if [ -n "$scan_status_pid" ]; then
+    kill "$scan_status_pid" 2>/dev/null || true
+    wait "$scan_status_pid" 2>/dev/null || true
+    printf '\r\033[K' >&2
+    scan_status_pid=""
+  fi
+}
+
+cleanup() {
+  stop_scan_status
+  command rm -f -- "$find_errors"
+}
+
+realpath_m=false
+if command -v realpath >/dev/null 2>&1 && realpath -m / >/dev/null 2>&1; then
+  realpath_m=true
+fi
+
+infra_root=$(normalize_path "$infradir")
+find_errors=$(mktemp "${TMPDIR:-/tmp}/links.prune.XXXXXX") || exit 1
+trap cleanup EXIT
+
+found=0
+pruned=0
+link=""
+target=""
+
+if [ "$apply" = true ]; then
+  mode="apply"
+else
+  mode="dry run"
+fi
+
+printf '%slinks.prune%s  %s(%s)%s\n' "$bold" "$reset" "$dim" "$mode" "$reset"
+
+if [ -t 2 ]; then
+  (
+    elapsed=0
+    while :; do
+      sleep 5
+      ((elapsed += 5))
+      printf '\r\033[K  %sScanning all of HOME... %ds elapsed%s' \
+        "$dim" "$elapsed" "$reset" >&2
+    done
+  ) &
+  scan_status_pid=$!
+fi
+
+while IFS= read -r -d '' link; do
+  [ -e "$link" ] && continue
+  target=$(resolve_link_target "$link") || continue
+
+  case "$target" in
+    "$infra_root"|"$infra_root"/*)
+      ((found += 1))
+      if [ "$apply" = true ]; then
+        if command rm -- "$link"; then
+          printf '  %s[-] pruned%s     %s%s%s -> %s\n' \
+            "$magenta" "$reset" "$dim" "$link" "$reset" "$target"
+          ((pruned += 1))
+        else
+          printf '  %s[ERROR] failed%s %s -> %s\n' \
+            "$red" "$reset" "$link" "$target" >&2
+        fi
+      else
+        printf '  %s[?] would prune%s %s%s%s -> %s\n' \
+          "$yellow" "$reset" "$dim" "$link" "$reset" "$target"
+      fi
+      ;;
+  esac
+done < <(find "$HOME" -type l -print0 2> "$find_errors")
+
+stop_scan_status
+
+scan_errors=0
+[ -s "$find_errors" ] && scan_errors=$(wc -l < "$find_errors")
+
+printf '\n%sSummary%s\n' "$bold" "$reset"
+if [ "$apply" = true ]; then
+  printf '  %s[-] pruned          %d%s\n' "$magenta" "$pruned" "$reset"
+  printf '  %s[!] failed          %d%s\n' "$red" "$((found - pruned))" "$reset"
+else
+  printf '  %s[?] would prune     %d%s\n' "$yellow" "$found" "$reset"
+  printf '  %sRun links.prune --apply to remove them.%s\n' "$dim" "$reset"
+fi
+printf '  %s[WARN] scan errors  %d%s\n' "$red" "$scan_errors" "$reset"
+
+if [ "$scan_errors" -gt 0 ]; then
+  printf '\n%sScan warnings%s\n' "$red" "$reset"
+  while IFS= read -r warning; do
+    printf '  %s[WARN]%s %s\n' "$red" "$reset" "$warning"
+  done < "$find_errors"
+fi

@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# lssnip - list snip categories with their size and newest snip.
+
+base="$HOME/personal/00-cap-md"
+
+printf '%-20s %7s  %s\n' 'CATEGORY' 'SNIPS' 'LAST ADDED'
+
+found=false
+for dir in "$base"/snip-*; do
+    [[ -d "$dir" ]] || continue
+    found=true
+    category=${dir##*/snip-}
+    count=$(find "$dir" -maxdepth 1 -type f | wc -l | tr -d ' ')
+
+    newest=""
+    for path in "$dir"/*; do
+        [[ -f "$path" ]] || continue
+        filename=${path##*/}
+        [[ -z "$newest" || "$filename" > "$newest" ]] && newest=$filename
+    done
+
+    if [[ -n "$newest" ]]; then
+        last=${newest:0:19}
+        last=${last/T/ }
+        date_part=${last:0:10}
+        time_part=${last:11}
+        last="$date_part ${time_part//-/:}"
+    else
+        last='-'
+    fi
+
+    printf '%-20s %7d  %s\n' "$category" "$count" "$last"
+done
+
+if [[ "$found" == false ]]; then
+    echo 'No snip categories found.'
+fi

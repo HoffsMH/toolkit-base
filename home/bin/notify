@@ -1,0 +1,37 @@
+#!/bin/bash
+# Cross-platform notification wrapper used by snip and other helpers.
+#
+# Usage:
+#   notify <title> [<message>] [<subtitle>]
+#
+# On macOS: uses osascript display notification (title, message, subtitle).
+# On Linux: uses notify-send "<title>" "<message>" (subtitle is appended to
+#   the message body since libnotify has no separate subtitle field).
+#
+# Single-arg invocation (snip's older style: `notify "some message"`) sends
+# the lone arg as the title, mirroring the mac script's behavior of
+# "title = $1".
+
+title="${1:-Notification}"
+message="${2:-}"
+subtitle="${3:-}"
+
+case "$(uname -s)" in
+  Darwin)
+    osascript -e "display notification \"$message\" with title \"$title\" subtitle \"$subtitle\""
+    ;;
+  Linux)
+    body="$message"
+    if [[ -n "$subtitle" ]]; then
+      body="${subtitle}${body:+ — $body}"
+    fi
+    if command -v notify-send >/dev/null; then
+      notify-send -- "$title" "$body"
+    else
+      echo "[notify] $title: $body" >&2
+    fi
+    ;;
+  *)
+    echo "[notify] $title: $message" >&2
+    ;;
+esac

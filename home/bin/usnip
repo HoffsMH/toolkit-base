@@ -1,0 +1,174 @@
+#!/bin/bash
+
+# usnip [category] — browse snips with a live preview and content search.
+#
+#   * Category is the optional first arg, defaulting to "main"; usnip pulls ONLY
+#     from ~/personal/00-cap-md/snip-<category> (created if absent):
+#       usnip          -> browse ~/personal/00-cap-md/snip-main
+#       usnip prompt   -> browse ~/personal/00-cap-md/snip-prompt
+#       usnip ALL      -> browse every snip-* category merged into one list
+#   * Type to search snip *contents*. Filenames are just timestamp+sha256, so
+#     fuzzy-matching them is useless — we ripgrep the text instead (like `fif`).
+#   * With an empty query the full list shows (newest first, images included)
+#     so you can browse. Typing narrows to text snips that match; images can't
+#     be content-searched, so they drop out while a query is active.
+#   * Images render as real pictures in the preview; text snips show their
+#     contents with the query highlighted.
+#   * Enter on an image copies it to the clipboard; enter on text opens nvim.
+#
+# ---------------------------------------------------------------------------
+# Requirements / fresh-machine setup
+# ---------------------------------------------------------------------------
+# Commands on PATH:
+#   fzf, fd, ripgrep (rg), kitten, pdftoppm, nvim, plus ~/bin/iclip and `notify`.
+#     brew install fzf fd ripgrep neovim poppler
+#     brew install kitty        # provides the `kitten` binary (see below)
+#   poppler provides pdftoppm, used to render page 1 of PDF snips for preview.
+#
+# Image preview is the fiddly part. It is the Kitty graphics protocol, drawn by
+# the OUTER terminal and shuttled through tmux. On this setup that means:
+#
+#   1. Terminal: ghostty (or any terminal that implements the Kitty graphics
+#      protocol). Sixel was tried and abandoned — tmux 3.6 advertises native
+#      sixel decode here but does not actually render it, so we use Kitty.
+#
+#   2. `kitten` (from the kitty terminal) renders the image. It is NOT the
+#      kitty terminal itself — just a CLI that emits Kitty-protocol escapes,
+#      which ghostty draws. We use it over `chafa -f kitty` because only kitten
+#      can emit Unicode *placeholders*; without them fzf paints blank preview
+#      rows over the floating image and slices it into bands.
+#        brew install kitty     # you never run kitty.app; ghostty stays default
+#
+#   3. tmux must forward the graphics escapes to ghostty:
+#        set -g allow-passthrough on      # already in .tmux.conf
+#      Without it the image is silently swallowed by tmux and the pane is blank.
+#
+# Quick sanity check on a new machine (run inside tmux, expect an image):
+#   kitten icat --transfer-mode=memory --unicode-placeholder ~/some-image.png
+#
+# Text preview uses `rg --pretty`; no extra setup. Outside tmux, kitten talks to
+# ghostty directly and the allow-passthrough requirement does not apply.
+# ---------------------------------------------------------------------------
+
+category="${1:-main}"
+base="$HOME/personal/00-cap-md"
+
+# `usnip ALL` (case-insensitive) browses every category at once; any other name
+# is a single category, auto-created. `roots` is the list of directories fd/rg
+# scan — one dir normally, every snip-* dir for ALL.
+if [[ "$category" == [Aa][Ll][Ll] ]]; then
+    roots=("$base"/snip-*/)
+    # Glob did not match (no categories yet) → fall back so fd/rg do not error.
+    [[ -d "${roots[0]}" ]] || roots=("$base/snip-main")
+else
+    dir="$base/snip-${category}"
+    mkdir -p "$dir"
+    roots=("$dir")
+fi
+
+# Shell-quote the roots so they can be embedded in the fzf command strings below
+# (handles spaces and keeps multiple paths as separate arguments).
+roots_q=""
+for r in "${roots[@]}"; do
+    roots_q+=" $(printf '%q' "$r")"
+done
+
+# Every snip, newest first (names are ISO-timestamp prefixed → reverse sort).
+list_all="fd -a -t f .${roots_q} | sort -r"
+
+# Content search: ripgrep the query across snips, newest first. Binary images
+# never match, so they fall out of the list while you're searching.
+search="rg -l -i --no-ignore-vcs --hidden -- {q}${roots_q} | sort -r"
+
+# Preview runs under `sh -c`; keep it POSIX. {} is the file, {q} the query.
+# Images: show_img pipes them to kitten icat, which emits the Kitty graphics
+# protocol (ghostty renders it) using Unicode placeholders, so the image
+# occupies real cells and fzf will not paint blank rows over it (chafa cannot do
+# placeholders, which fragmented the image). kitten auto-detects tmux and
+# forwards via passthrough; that needs allow-passthrough on (see .tmux.conf).
+# Native sixel decode is broken in this ghostty+tmux combo, so it is unused.
+# PDFs: render page 1 to a temp PNG with pdftoppm, then the same show_img path.
+# Text: ripgrep with the query highlighted, falling back to the raw file.
+preview='
+esc=$(printf "\033")
+f={}
+q={q}
+# Draw image file $1 via kitten. One row short so the image never touches the
+# bottom preview row, which makes tmux scroll and blanks it (junegunn/fzf#2544).
+# Keep the final kitten placeholder row and attach the reset to it.
+show_img() {
+  rows=$((FZF_PREVIEW_LINES - 1))
+  kitten icat --clear --transfer-mode=memory --unicode-placeholder \
+         --stdin=no --place="${FZF_PREVIEW_COLUMNS}x${rows}@0x0" "$1" \
+    | sed "\$s/\$/${esc}[m/"
+}
+lc=$(printf "%s" "$f" | tr "[:upper:]" "[:lower:]")
+case "$lc" in
+  *.png|*.jpg|*.jpeg|*.gif|*.bmp|*.tiff|*.webp)
+    show_img "$f" ;;
+  *.pdf)
+    tmp=$(mktemp "${TMPDIR:-/tmp}/usnip-pdf.XXXXXXXX")
+    if pdftoppm -png -f 1 -l 1 -singlefile -scale-to 1400 "$f" "$tmp" 2>/dev/null; then
+      show_img "${tmp}.png"
+    else
+      echo "[pdf] could not render the first page of: $f"
+    fi
+    rm -f "$tmp" "${tmp}.png" ;;
+  *)
+    if [ -n "$q" ]; then
+      rg -i --pretty --context 30 -- "$q" "$f" || cat "$f"
+    else
+      cat "$f"
+    fi ;;
+esac
+'
+
+# --disabled turns off fzf's own (filename) matching; the change:reload bind
+# drives the list from ripgrep instead, so each keystroke re-searches contents.
+selection=$(FZF_DEFAULT_COMMAND="$list_all" fzf \
+    --ansi \
+    --disabled \
+    --bind "change:reload([ -z {q} ] && $list_all || $search || true)" \
+    --preview "$preview" \
+    --preview-window 'right:60%')
+
+# Exit if nothing was selected
+if [[ -z "$selection" ]]; then
+    echo "No selection made."
+    exit 1
+fi
+
+# Check that the selected file exists
+if [[ ! -f "$selection" ]]; then
+    echo "Selected file does not exist."
+    exit 1
+fi
+
+# Image -> clipboard; PDF -> system viewer; anything else -> open in nvim.
+# (lowercase via tr for bash 3.2 compatibility — macOS /bin/bash has no ${v,,})
+lc=$(printf '%s' "$selection" | tr '[:upper:]' '[:lower:]')
+case "$lc" in
+    *.png|*.jpg|*.jpeg|*.gif|*.bmp|*.tiff|*.webp)
+        if $HOME/bin/iclip copy "$selection"; then
+            notify "usnip" "Copied image to clipboard."
+            echo "Copied image to clipboard: $selection"
+        else
+            echo "Failed to copy image to clipboard."
+            exit 1
+        fi
+        ;;
+    *.pdf)
+        # Open PDFs in the system viewer rather than nvim.
+        if command -v open >/dev/null 2>&1; then
+            open "$selection"
+        elif command -v xdg-open >/dev/null 2>&1; then
+            xdg-open "$selection"
+        else
+            echo "No system opener found for: $selection"
+            exit 1
+        fi
+        ;;
+    *)
+        nvim "$selection" -u ~/.config/nvim/lua/text-editor.lua
+        ;;
+esac

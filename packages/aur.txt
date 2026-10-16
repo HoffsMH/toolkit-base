@@ -1,0 +1,2 @@
+zsh-autopair-git
+zsh-fast-syntax-highlighting-git

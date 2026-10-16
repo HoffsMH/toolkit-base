@@ -1,0 +1,102 @@
+#!/bin/bash
+
+# snip [category] — save the clipboard into ~/personal/00-cap-md/snip-<category>
+# as a timestamped, content-addressed file. Images (screenshots) are saved as
+# image files; any other clipboard content is saved as a .md text snip. The
+# category is the optional first arg and defaults to "main":
+#   snip          -> ~/personal/00-cap-md/snip-main
+#   snip prompt   -> ~/personal/00-cap-md/snip-prompt   (auto-created if absent)
+# Piped stdin overrides the clipboard and is always saved as a text snip:
+#   echo "note to self" | snip
+#   some-command | snip prompt
+# Browse a category with `usnip [category]`.
+#
+# Requirements / fresh-machine setup:
+#   Commands on PATH: fd, sha256sum, awk, plus these ~/bin helpers —
+#     iso-str  (timestamp generator), uclip (text paste), iclip (image
+#     clipboard), notify (desktop notification).
+#     brew install fd coreutils    # coreutils provides sha256sum on macOS
+#   iclip needs platform clipboard tools — see ~/bin/iclip for its own setup.
+
+# Target directory for this category (auto-created on first use).
+category="${1:-main}"
+dir="$HOME/personal/00-cap-md/snip-${category}"
+mkdir -p "$dir"
+
+# Get current date (shared by the text and image branches)
+date=$($HOME/bin/iso-str)
+
+# If the clipboard holds an image (e.g. a screenshot), snip it as a file using
+# the same timestamp + sha256 scheme as text snips, but over the image's bytes.
+# Skipped when stdin is piped — piped input wins over the clipboard.
+if [ -t 0 ] && ext=$($HOME/bin/iclip type 2>/dev/null); then
+    tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/snip.XXXXXXXX") || exit 1
+    trap 'rm -rf "$tmpdir"' EXIT
+    tmp="$tmpdir/clip.$ext"
+
+    if ! $HOME/bin/iclip save "$tmp"; then
+        notify 'snip' 'Could not read image from clipboard.'
+        echo "Could not read image from clipboard."
+        exit 1
+    fi
+
+    # Get sha256 sum of the image bytes
+    shasum=$(sha256sum "$tmp" | awk '{print $1}')
+
+    # Generate filename / full path
+    filename="${date}-${shasum}.${ext}"
+    path="${dir}/${filename}"
+
+    # Check if a file with the same shasum exists
+    matching_file=$(fd "$shasum" "$dir")
+
+    if [[ -n "$matching_file" ]]; then
+        notify 'An image with the same sha sum already exists. Not creating a new file.'
+        echo "An image with the same sha sum already exists. Not creating a new file."
+    else
+        mv "$tmp" "$path"
+        notify "New image $path created."
+        echo "New image $path created."
+    fi
+    exit 0
+fi
+
+# Otherwise fall back to a text snip (original behavior).
+
+# Get content: piped stdin if present, otherwise the clipboard
+if [ -t 0 ]; then
+    clipped_data=$($HOME/bin/uclip)
+else
+    clipped_data=$(cat)
+fi
+
+# Nothing but whitespace is not worth a file — matches nsnip's behaviour and
+# stops a failed pipeline leaving an empty snip behind.
+if [[ -z "${clipped_data//[[:space:]]/}" ]]; then
+    notify 'snip' 'Nothing to snip.'
+    echo "Nothing to snip."
+    exit 1
+fi
+
+# Get sha256 sum
+shasum=$(echo -n "$clipped_data" | sha256sum | awk '{print $1}')
+
+# Generate filename
+filename="${date}-${shasum}.md"
+
+# Full path to the file
+path="${dir}/${filename}"
+
+# Check if a file with the same shasum exists
+matching_file=$(fd "$shasum" "$dir")
+
+# Check if a file with the same shasum exists
+if [[ -n "$matching_file" ]]; then
+    notify 'A file with the same sha sum already exists. Not creating a new file.'
+    echo "A file with the same sha sum already exists. Not creating a new file."
+else
+    # Append clipboard contents to file
+    echo "$clipped_data" >> $path
+    notify "New file $path created."
+    echo "New file $path created."
+fi

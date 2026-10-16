@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Usage: ./amend_changes_to_branch.sh <branch-name>
+
+# Check if branch name is provided
+if [ "$#" -lt 1 ]; then
+    git commit --amend --no-edit
+    exit 0
+fi
+
+# # Variables
+# TARGET_BRANCH_OR_COMMIT=$1
+# CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+# CURRENT_COMMIT=$(git rev-parse HEAD)
+#
+# if [ "$CURRENT_BRANCH" == "HEAD" ]; then
+#     CURRENT_IDENTITY=$CURRENT_COMMIT  # Use commit SHA if detached HEAD
+# else
+#     CURRENT_IDENTITY=$CURRENT_BRANCH  # Use branch name if not detached
+# fi
+#
+# # Check if already on the target branch or commit
+# if [ "$TARGET_BRANCH_OR_COMMIT" == "$CURRENT_IDENTITY" ] || [ "$TARGET_BRANCH_OR_COMMIT" == "HEAD" ]; then
+#     git commit --amend --no-edit
+#     exit 0
+# fi
+#
+# git commit -m 'reset me'
+#
+# git stash
+#
+# git reset HEAD~1
+#
+# # Stash the changes to be committed to allow branch switch
+# git stash
+#
+# # Switch to the target branch or commit
+# git checkout $TARGET_BRANCH_OR_COMMIT
+#
+# # Apply the stashed changes to be committed
+# git stash pop
+#
+# # Add all changes
+# git add .
+#
+# # Amend the commit without changing the message
+# git commit --amend --no-edit
+#
+# # Return to the original commit or branch
+# git checkout $CURRENT_IDENTITY
+#
+# # Apply the remaining stashed changes
+# git stash pop

@@ -1,0 +1,113 @@
+#!/usr/bin/env bash
+# Link each toolkit's home/ into $HOME with GNU stow, one stow package per
+# toolkit. A machine's toolkits are whatever is cloned under $TOOLKITS_DIR.
+# Restows, so links to files deleted from a toolkit are removed too.
+# root/ is copied, not linked: see root.set.
+set -euo pipefail
+
+usage() {
+  printf 'Usage: %s [-n] [-v] [-b] [-D] [toolkit...]\n' "${0##*/}" >&2
+  printf '  -n  dry run (implies -v)\n  -v  list each link\n' >&2
+  printf '  -b  move a regular file in the way to <file>.pre-toolkit first\n' >&2
+  printf '  -D  remove the links instead\n' >&2
+  exit 2
+}
+
+toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
+action=--restow
+dry_run=false
+verbose=0
+backup=false
+
+while getopts nvbD opt; do
+  case $opt in
+    n) dry_run=true; verbose=1 ;;
+    v) verbose=1 ;;
+    b) backup=true ;;
+    D) action=--delete ;;
+    *) usage ;;
+  esac
+done
+shift $((OPTIND - 1))
+
+command -v stow >/dev/null || { echo "links.set: needs GNU stow" >&2; exit 1; }
+[ -d "$toolkits_dir" ] || { echo "links.set: no $toolkits_dir" >&2; exit 1; }
+
+if [ $# -eq 0 ]; then
+  set --
+  for d in "$toolkits_dir"/*/; do set -- "$@" "$(basename "$d")"; done
+fi
+
+stow_flags=(--no-folding "--verbose=$verbose" --target="$HOME" "$action")
+$dry_run && stow_flags+=(--simulate)
+
+# Stow treats absolute symlinks as foreign. Drop one that already resolves to
+# the toolkit's own file so stow can replace it with a relative link; the
+# dropped ones are recorded so a failed stow can put them back.
+dropped=()
+drop_absolute_links() {
+  local src=$1 f t
+  dropped=()
+  while IFS= read -r -d '' f; do
+    t="$HOME/${f#"$src"/}"
+    [ -L "$t" ] && [[ $(readlink "$t") == /* ]] || continue
+    [ "$(readlink -f "$t")" = "$(readlink -f "$f")" ] || continue
+    if $dry_run; then
+      echo "would relink: ${t#"$HOME"/}"
+    else
+      dropped+=("$t" "$(readlink "$t")")
+      rm "$t"
+    fi
+  done < <(find "$src" -type f -print0)
+}
+
+# With -b, a regular file where a link should go (a distro default, say) is
+# moved aside rather than reported as a conflict.
+moved=()
+move_aside() {
+  local src=$1 f t
+  moved=()
+  while IFS= read -r -d '' f; do
+    t="$HOME/${f#"$src"/}"
+    [ -f "$t" ] && [ ! -L "$t" ] || continue
+    [ ! -e "$t.pre-toolkit" ] || { echo "links.set: $t.pre-toolkit exists, not moving $t" >&2; continue; }
+    if $dry_run; then
+      echo "would move aside: ${t#"$HOME"/}"
+    else
+      mv "$t" "$t.pre-toolkit"
+      moved+=("$t")
+      echo "moved aside: ${t#"$HOME"/} -> ${t#"$HOME"/}.pre-toolkit"
+    fi
+  done < <(find "$src" -type f -print0)
+}
+
+restore_dropped() {
+  local i t
+  for ((i = 0; i < ${#dropped[@]}; i += 2)); do
+    ln -s "${dropped[i + 1]}" "${dropped[i]}"
+  done
+  for t in "${moved[@]}"; do mv "$t.pre-toolkit" "$t"; done
+}
+
+failed=()
+for name in "$@"; do
+  pkg="$toolkits_dir/$name"
+  [ -d "$pkg/home" ] || { echo "== $name: no home/, skipped"; continue; }
+  echo "== $name"
+  # Linked files land in $HOME, so keep them private to this user.
+  $dry_run || chmod -R go-rwx "$pkg/home"
+  dropped=() moved=()
+  [ "$action" = --delete ] || drop_absolute_links "$pkg/home"
+  [ "$action" = --delete ] || ! $backup || move_aside "$pkg/home"
+  # stow logs on stderr; send it to stdout so callers can pipe it.
+  if ! stow --dir="$pkg" "${stow_flags[@]}" home 2>&1; then
+    failed+=("$name")
+    restore_dropped
+  fi
+done
+
+if [ ${#failed[@]} -gt 0 ]; then
+  printf '\nlinks.set: conflicts in: %s\n' "${failed[*]}" >&2
+  printf 'Stow skipped those toolkits entirely. Move or adopt each listed file, then rerun.\n' >&2
+  exit 1
+fi

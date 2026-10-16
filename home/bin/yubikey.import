@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Import the personal public key, trust it, learn the YubiKey-resident
+# subkeys, and snapshot the AUT subkey as ~/.ssh/id_yubikey_auth.pub for
+# the IdentityFile in ~/.ssh/config. Refuses a key.pub whose primary key
+# is not the one pinned in ~/.config/gnupg-primary.fpr. Idempotent.
+set -euo pipefail
+
+PUBKEY_URL="https://mhkr.xyz/key.pub"
+FPR_FILE="$HOME/.config/gnupg-primary.fpr"
+
+for cmd in curl gpg gpg-connect-agent gpgconf ssh-add; do
+  command -v "$cmd" >/dev/null || { echo "yubikey.import: needs $cmd (run yubikey.setup)" >&2; exit 1; }
+done
+
+pinned=$(tr -d '[:space:]' < "$FPR_FILE")
+[ -n "$pinned" ] || { echo "yubikey.import: $FPR_FILE is empty" >&2; exit 1; }
+
+key=$(curl -fsSL "$PUBKEY_URL")
+listing=$(printf '%s\n' "$key" | gpg --with-colons --import-options show-only --import 2>/dev/null)
+# Exactly one primary key, and its fingerprint (the fpr line right after
+# pub) must be the pinned one.
+npub=$(printf '%s\n' "$listing" | awk -F: '$1=="pub"' | wc -l)
+fpr=$(printf '%s\n' "$listing" | awk -F: '$1=="pub" {p=1; next} p && $1=="fpr" {print $10; exit}')
+if [ "$npub" -ne 1 ] || [ "$fpr" != "$pinned" ]; then
+  echo "yubikey.import: $PUBKEY_URL is not the pinned key $pinned (got ${fpr:-none}, $npub primary keys)" >&2
+  exit 1
+fi
+
+printf '%s\n' "$key" | gpg --import
+echo "$fpr:6:" | gpg --import-ownertrust
+
+gpg-connect-agent "scd serialno" "learn --force" /bye
+gpg-connect-agent updatestartuptty /bye
+gpg-connect-agent reloadagent /bye
+
+gpg --export-ssh-key "$fpr" > "$HOME/.ssh/id_yubikey_auth.pub"
+chmod 600 "$HOME/.ssh/id_yubikey_auth.pub"
+
+SSH_AUTH_SOCK="$(gpgconf --list-dirs agent-ssh-socket)" ssh-add -L
+echo "yubikey.import: done. Verify: ssh -T git@github.com"

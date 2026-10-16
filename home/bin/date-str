@@ -1,0 +1,20 @@
+#!/bin/bash
+# Extract date from DJI filename (YYYYMMDDHHMMSS format) and output YYYY-MM-DD
+
+if [ -z "$1" ]; then
+    echo "Usage: date-str <filename>"
+    echo "Extracts date from DJI filenames like DJI_20260627182553_0003_D.MP4"
+    exit 1
+fi
+
+filename=$(basename "$1")
+
+# Match DJI_YYYYMMDDHHMMSS pattern
+if [[ "$filename" =~ DJI_([0-9]{8})[0-9]{6} ]]; then
+    date_str="${BASH_REMATCH[1]}"
+    # Format as YYYY-MM-DD
+    echo "${date_str:0:4}-${date_str:4:2}-${date_str:6:2}"
+else
+    echo "No date pattern found in: $filename" >&2
+    exit 1
+fi

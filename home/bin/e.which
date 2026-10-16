@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+
+if command -v bat >/dev/null 2>&1; then
+  preview='bat --color=always -- {}'
+else
+  preview='cat -- {}'
+fi
+
+if [ $# -eq 0 ]; then
+  file=$(binlist | fzf --height=50% --layout=reverse --preview="$preview" --preview-window=:hidden)
+  if [ -n "$file" ]; then
+    nvim -- "$(command -v "$file")"
+  else
+    echo "No file selected"
+  fi
+else
+  nvim -- "$(command -v "$1")"
+fi

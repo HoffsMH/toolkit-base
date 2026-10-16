@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+
+if command -v bat >/dev/null 2>&1; then
+  view_file() {
+    bat --theme gruvbox-dark -- "$1"
+  }
+  preview='bat --color=always -- {}'
+else
+  view_file() {
+    cat -- "$1"
+  }
+  preview='cat -- {}'
+fi
+
+if [ $# -eq 0 ]; then
+  file=$(binlist | fzf --height=50% --layout=reverse --preview="$preview" --preview-window=:hidden)
+  if [ -n "$file" ]; then
+    view_file "$(command -v "$file")"
+  else
+    echo "No file selected"
+  fi
+else
+  view_file "$(command -v "$1")"
+fi

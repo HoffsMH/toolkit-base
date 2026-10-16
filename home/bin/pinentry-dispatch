@@ -1,0 +1,9 @@
+#!/bin/sh
+# Pinentry for gpg-agent, picked by platform. Absolute paths only: this
+# program receives the YubiKey PIN, so nothing here may come from PATH.
+case "$(/usr/bin/uname)" in
+  Linux)  exec /usr/bin/pinentry-gnome3 "$@" ;;
+  Darwin) exec /opt/homebrew/bin/pinentry-mac "$@" ;;
+esac
+echo "pinentry-dispatch: no pinentry for $(/usr/bin/uname)" >&2
+exit 1

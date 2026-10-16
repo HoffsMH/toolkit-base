@@ -1,0 +1,35 @@
+
+format = """
+$username\
+$hostname\
+$shlvl\
+$kubernetes\
+$directory\
+$git_branch\
+$git_commit\
+$git_state\
+$git_status\
+$hg_branch\
+$docker_context\
+$package\
+$cmake\
+$helm\
+$kotlin\
+$nix_shell\
+$openstack\
+$env_var\
+$crystal\
+$custom\
+$cmd_duration\
+$line_break\
+$jobs\
+$battery\
+$time\
+$status\
+$character"""
+
+scan_timeout = 50
+command_timeout = 50
+
+[directory]
+style =	"bold blue"

@@ -1,0 +1,39 @@
+#!/bin/bash
+# my-script rm-by-ext
+
+usage() {
+	echo "Usage: $0 [--dry-run] EXTENSION SOURCE_DIR"
+	exit 1
+}
+
+DRY_RUN=false
+if [[ "$1" == "--dry-run" ]]; then
+      DRY_RUN=true
+      shift
+fi
+
+[[ $# -ne 2 ]] && usage
+
+EXTENSION="$1"
+SOURCE_DIR="$2"
+
+# Check for fd variants, fallback to find
+if command -v fdfind >/dev/null 2>&1; then
+      FIND_CMD="fdfind -t f -e $EXTENSION . $SOURCE_DIR"
+elif command -v fd >/dev/null 2>&1; then
+      FIND_CMD="fd -t f -e $EXTENSION . $SOURCE_DIR"
+else
+      FIND_CMD="find $SOURCE_DIR -type f -name '*.$EXTENSION'"
+fi
+
+$FIND_CMD | while read -r file; do
+      echo "===================================="
+      echo ""
+      echo "REMOVE: $file"
+      echo ""
+      echo "===================================="
+
+      if ! $DRY_RUN; then
+          rm "$file"
+      fi
+done

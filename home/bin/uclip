@@ -1,0 +1,38 @@
+#!/bin/bash
+
+set -euo pipefail
+
+die() { echo "uclip: $*" >&2; exit 1; }
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+if [[ ! -r "$script_dir/clipboard-backend" ]]; then
+    script_path=${BASH_SOURCE[0]}
+    while [[ -L "$script_path" ]]; do
+        link=$(readlink "$script_path")
+        [[ "$link" == /* ]] && script_path=$link || script_path=$(dirname "$script_path")/$link
+    done
+    script_dir=$(cd -- "$(dirname -- "$script_path")" && pwd -P)
+fi
+[[ -r "$script_dir/clipboard-backend" ]] || die "clipboard backend detector not found"
+# shellcheck source=clipboard-backend
+source "$script_dir/clipboard-backend"
+detect_clipboard_backend || true
+
+case "$CLIPBOARD_BACKEND" in
+    wayland)
+        command -v wl-paste >/dev/null 2>&1 || die "wayland clipboard backend unavailable"
+        wayland_clipboard_command wl-paste || die "wayland clipboard backend unavailable"
+        ;;
+    x11)
+        command -v xclip >/dev/null 2>&1 || die "X11 clipboard backend unavailable"
+        xclip -selection clipboard -o || die "X11 clipboard backend unavailable"
+        ;;
+    macos)
+        command -v pbpaste >/dev/null 2>&1 || die "macOS clipboard backend unavailable"
+        pbpaste || die "macOS clipboard backend unavailable"
+        ;;
+    *)
+        clipboard_detection_report >&2
+        die "no clipboard backend available"
+        ;;
+esac

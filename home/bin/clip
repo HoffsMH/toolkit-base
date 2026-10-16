@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Function to detect the display environment and use the appropriate copy command
+copy_to_clipboard() {
+    if [[ "$XDG_SESSION_TYPE" == "wayland" ]]; then
+        wl-copy
+    elif [[ "$XDG_SESSION_TYPE" == "x11" ]]; then
+        xclip -selection clipboard
+    else
+        pbcopy
+    fi
+}
+
+# Function to read input and copy to clipboard
+copy_input() {
+    local input_content=""
+
+    # Check if there are command line arguments
+    if [[ $# -gt 0 ]]; then
+        # Concatenate all arguments into one string
+        input_content="$*"
+    else
+        # Read from stdin if no arguments are provided
+        input_content=$(cat)
+    fi
+
+    # Use the copy function to send to clipboard
+    echo -n "$input_content" | copy_to_clipboard
+}
+
+# Pass all arguments to the copy_input function
+copy_input "$@"

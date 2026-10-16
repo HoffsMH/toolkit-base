@@ -1,0 +1,128 @@
+#!/bin/bash
+
+# Shared clipboard backend detection for iclip and uclip.
+
+clipboard_loginctl_type() {
+    local session_id type
+
+    command -v loginctl >/dev/null 2>&1 || return 1
+    while read -r session_id _; do
+        [[ -n "$session_id" ]] || continue
+        type=$(loginctl show-session "$session_id" -p Type --value 2>/dev/null || true)
+        case "$type" in
+            wayland|x11)
+                printf '%s\n' "$type"
+                return 0
+                ;;
+        esac
+    done < <(loginctl list-sessions --no-legend 2>/dev/null | awk -v uid="$(id -u)" '$2 == uid { print $1 }')
+    return 1
+}
+
+detect_clipboard_backend() {
+    local socket login_type compositor
+    local -a sockets=()
+
+    CLIPBOARD_BACKEND=""
+    CLIPBOARD_WAYLAND_DISPLAY=""
+    CLIPBOARD_DETECTION=()
+
+    if [[ -n "${WAYLAND_DISPLAY:-}" ]]; then
+        CLIPBOARD_DETECTION+=("wayland display: ${WAYLAND_DISPLAY}")
+        CLIPBOARD_BACKEND=wayland
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("wayland display: unset")
+
+    if [[ -n "${XDG_RUNTIME_DIR:-}" && -d "$XDG_RUNTIME_DIR" ]]; then
+        shopt -s nullglob
+        sockets=("$XDG_RUNTIME_DIR"/wayland-[0-9]*)
+        shopt -u nullglob
+        for socket in "${sockets[@]}"; do
+            [[ -S "$socket" ]] || continue
+            CLIPBOARD_WAYLAND_DISPLAY=${socket##*/}
+            CLIPBOARD_DETECTION+=("wayland socket: $socket")
+            CLIPBOARD_BACKEND=wayland
+            return 0
+        done
+        CLIPBOARD_DETECTION+=("wayland socket: none under $XDG_RUNTIME_DIR")
+    else
+        CLIPBOARD_DETECTION+=("wayland socket: XDG_RUNTIME_DIR unavailable")
+    fi
+
+    if [[ "${XDG_SESSION_TYPE:-}" == wayland ]]; then
+        CLIPBOARD_DETECTION+=("session type: wayland")
+        CLIPBOARD_BACKEND=wayland
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("session type: ${XDG_SESSION_TYPE:-unset}")
+
+    login_type=$(clipboard_loginctl_type || true)
+    CLIPBOARD_DETECTION+=("loginctl session: ${login_type:-none}")
+    if [[ "$login_type" == wayland ]]; then
+        CLIPBOARD_BACKEND=wayland
+        return 0
+    fi
+
+    compositor=$(pgrep -u "$(id -u)" -x 'Hyprland|sway|wayfire|weston|kwin_wayland|gnome-shell' 2>/dev/null | head -n 1 || true)
+    if [[ -n "$compositor" ]]; then
+        CLIPBOARD_DETECTION+=("wayland compositor: pid $compositor")
+        CLIPBOARD_BACKEND=wayland
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("wayland compositor: none")
+
+    if [[ "$(uname -s 2>/dev/null || true)" == Darwin ]]; then
+        CLIPBOARD_DETECTION+=("macOS uname: Darwin")
+        CLIPBOARD_BACKEND=macos
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("macOS uname: not Darwin")
+    if command -v pbpaste >/dev/null 2>&1 && command -v osascript >/dev/null 2>&1; then
+        CLIPBOARD_DETECTION+=("macOS tools: pbpaste and osascript found")
+        CLIPBOARD_BACKEND=macos
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("macOS tools: pbpaste and osascript not both found")
+
+    if [[ -n "${DISPLAY:-}" ]]; then
+        if command -v xclip >/dev/null 2>&1 && xclip -selection clipboard -t TARGETS -o >/dev/null 2>&1; then
+            CLIPBOARD_DETECTION+=("X11 display: ${DISPLAY}, xclip connected")
+            CLIPBOARD_BACKEND=x11
+            return 0
+        fi
+        CLIPBOARD_DETECTION+=("X11 display: ${DISPLAY}, xclip could not connect")
+    else
+        CLIPBOARD_DETECTION+=("X11 display: unset")
+    fi
+
+    if [[ "${XDG_SESSION_TYPE:-}" == x11 ]]; then
+        CLIPBOARD_DETECTION+=("session type: x11")
+        CLIPBOARD_BACKEND=x11
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("X11 session type: ${XDG_SESSION_TYPE:-unset}")
+    if [[ "$login_type" == x11 ]]; then
+        CLIPBOARD_DETECTION+=("loginctl X11 session: x11")
+        CLIPBOARD_BACKEND=x11
+        return 0
+    fi
+    CLIPBOARD_DETECTION+=("loginctl X11 session: ${login_type:-none}")
+    return 1
+}
+
+clipboard_detection_report() {
+    printf '%s\n' "${CLIPBOARD_DETECTION[@]}"
+    printf 'chosen backend: %s\n' "${CLIPBOARD_BACKEND:-none}"
+    if [[ -n "${CLIPBOARD_WAYLAND_DISPLAY:-}" ]]; then
+        printf 'derived Wayland display: %s\n' "$CLIPBOARD_WAYLAND_DISPLAY"
+    fi
+}
+
+wayland_clipboard_command() {
+    if [[ -n "${CLIPBOARD_WAYLAND_DISPLAY:-}" ]]; then
+        WAYLAND_DISPLAY="$CLIPBOARD_WAYLAND_DISPLAY" command "$@"
+    else
+        command "$@"
+    fi
+}

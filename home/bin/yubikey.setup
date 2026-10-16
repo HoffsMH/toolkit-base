@@ -1,0 +1,42 @@
+#!/usr/bin/env bash
+# Install the YubiKey + gpg-agent + SSH stack on Linux (pacman) or macOS
+# (Homebrew). Config files come from base's channel 1; this does only what
+# a file can't. Idempotent. Run yubikey.import next, with the key plugged in.
+set -euo pipefail
+
+case "$(/usr/bin/uname)" in
+  Linux)
+    command -v pacman >/dev/null || { echo "yubikey.setup: needs pacman" >&2; exit 1; }
+    # gcr is the GNOME backend that pinentry-dispatch uses on Linux.
+    sudo pacman -S --needed --noconfirm \
+      gnupg pinentry gcr pcsclite ccid \
+      yubikey-manager yubikey-personalization pcsc-tools libfido2
+    sudo systemctl enable --now pcscd.service
+    pinentry=/usr/bin/pinentry-gnome3
+    ;;
+  Darwin)
+    command -v brew >/dev/null || { echo "yubikey.setup: needs Homebrew" >&2; exit 1; }
+    # macOS has its own smartcard service, so there is no pcscd to enable.
+    brew install gnupg pinentry-mac ykman libfido2
+    pinentry=/opt/homebrew/bin/pinentry-mac
+    ;;
+  *)
+    echo "yubikey.setup: unsupported OS $(/usr/bin/uname)" >&2; exit 1 ;;
+esac
+
+# pinentry-dispatch hardcodes these paths, so fail here rather than at the
+# first PIN prompt.
+[ -x "$pinentry" ] || { echo "yubikey.setup: $pinentry missing" >&2; exit 1; }
+
+mkdir -p "$HOME/.gnupg" "$HOME/.ssh"
+chmod 700 "$HOME/.gnupg" "$HOME/.ssh"
+
+if [ ! -f "$HOME/.ssh/config.local" ]; then
+  cat > "$HOME/.ssh/config.local" <<'CONF'
+# Per-machine SSH overrides, not in any toolkit. Included first by
+# ~/.ssh/config, so Host entries here win over the shared ones.
+CONF
+  chmod 600 "$HOME/.ssh/config.local"
+fi
+
+echo "yubikey.setup: done. Next, with the YubiKey plugged in: yubikey.import"

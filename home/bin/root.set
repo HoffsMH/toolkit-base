@@ -1,0 +1,174 @@
+#!/bin/bash
+# Copy every file under each layer's root/ to the same path under /.
+# The system-file counterpart of links.set; see linux-arch/specs/root-files.md.
+
+if [ -d "$HOME/infra" ]; then
+  infradir="$HOME/infra"
+elif [ -d "/opt/infra" ]; then
+  infradir="/opt/infra"
+else
+  printf 'Error: infra directory not found in %s or /opt/infra\n' "$HOME" >&2
+  exit 1
+fi
+
+force=false
+dry_run=false
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -f) force=true ;;
+    -n) dry_run=true ;;
+    *)
+      printf 'Usage: %s [-f] [-n]\n' "${0##*/}" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
+
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+  green=$'\033[32m'
+  yellow=$'\033[33m'
+  cyan=$'\033[36m'
+  magenta=$'\033[35m'
+  red=$'\033[31m'
+  bold=$'\033[1m'
+  dim=$'\033[2m'
+  reset=$'\033[0m'
+else
+  green=""
+  yellow=""
+  cyan=""
+  magenta=""
+  red=""
+  bold=""
+  dim=""
+  reset=""
+fi
+
+installed=0
+unchanged=0
+skipped=0
+planned=0
+forced=0
+invalid=0
+
+print_action() {
+  local color="$1"
+  local marker="$2"
+  local label="$3"
+  local target="$4"
+  local source="$5"
+
+  printf '  %s%s %-13s%s %s%s%s <- %s\n' \
+    "$color" "$marker" "$label" "$reset" "$dim" "$target" "$reset" "$source"
+}
+
+# sudoers.d files get the conventional 0440; sudo rejects writable ones.
+mode_for() {
+  local source="$1"
+  local target="$2"
+
+  case "$target" in
+    /etc/sudoers.d/*) echo 440 ;;
+    *) if [ -x "$source" ]; then echo 755; else echo 644; fi ;;
+  esac
+}
+
+install_file() {
+  local source="$1"
+  local target="$2"
+
+  sudo install -D -m "$(mode_for "$source" "$target")" -o root -g root \
+    "$source" "$target"
+}
+
+copy_root() {
+  local source_dir="$1"
+  local section="$2"
+  local file target
+
+  printf '\n%s%s%s %s%s%s\n' "$bold" "$section" "$reset" "$dim" "$source_dir" "$reset"
+
+  while IFS= read -r -d '' file; do
+    target=${file#"$source_dir"}
+
+    # A broken sudoers file locks out sudo, so never install one.
+    if [[ "$target" = /etc/sudoers.d/* ]] && ! visudo -cf "$file" >/dev/null; then
+      print_action "$red" "[!]" "invalid" "$target" "$file"
+      ((invalid += 1))
+      continue
+    fi
+
+    if ! sudo test -e "$target"; then
+      if [ "$dry_run" = true ]; then
+        print_action "$cyan" "[?]" "would install" "$target" "$file"
+        ((planned += 1))
+      else
+        install_file "$file" "$target"
+        print_action "$green" "[+]" "installed" "$target" "$file"
+        ((installed += 1))
+      fi
+    elif sudo cmp -s "$file" "$target"; then
+      print_action "$dim" "[=]" "unchanged" "$target" "$file"
+      ((unchanged += 1))
+    else
+      sudo diff -u "$target" "$file" | sed 's/^/      /'
+      if [ "$force" = false ]; then
+        print_action "$yellow" "[-]" "skipped" "$target" "$file"
+        ((skipped += 1))
+      elif [ "$dry_run" = true ]; then
+        print_action "$cyan" "[?]" "would install" "$target" "$file"
+        ((planned += 1))
+      else
+        install_file "$file" "$target"
+        print_action "$magenta" "[*]" "forced" "$target" "$file"
+        ((forced += 1))
+      fi
+    fi
+  done < <(find "$source_dir" -type f -print0 | sort -z)
+}
+
+# Same layers as links.set, least specific first.
+read -r os_id os_like < <(
+  ID= ID_LIKE=
+  if [ -f /etc/os-release ]; then
+    . /etc/os-release
+  elif [ -f /usr/lib/os-release ]; then
+    . /usr/lib/os-release
+  fi
+  printf '%s %s\n' "$ID" "$ID_LIKE"
+)
+
+layers=(common)
+if [ "$(uname)" = "Darwin" ]; then
+  layers+=(mac)
+elif [ "$(uname)" = "Linux" ] && [[ " $os_id $os_like " = *" arch "* ]]; then
+  layers+=(linux-arch)
+  [ "$os_id" = omarchy ] && layers+=(omarchy)
+else
+  printf 'Unsupported platform: %s %s\n' "$(uname)" "$os_id" >&2
+  exit 1
+fi
+
+mode="normal"
+[ "$force" = true ] && mode="force"
+[ "$dry_run" = true ] && mode="dry run"
+
+printf '%sroot.set%s  %s -> /  %s(%s)%s\n' \
+  "$bold" "$reset" "$infradir" "$dim" "$mode" "$reset"
+
+for layer in "${layers[@]}"; do
+  layer_dir="$infradir/assets/workstation/$layer/root"
+  [ -d "$layer_dir" ] && copy_root "$layer_dir" "$layer"
+done
+
+printf '\n%sSummary%s\n' "$bold" "$reset"
+printf '  %s[+] %-9s %d%s\n' "$green" "installed" "$installed" "$reset"
+printf '  %s[=] %-9s %d%s\n' "$dim" "unchanged" "$unchanged" "$reset"
+printf '  %s[-] %-9s %d%s\n' "$yellow" "skipped" "$skipped" "$reset"
+printf '  %s[?] %-9s %d%s\n' "$cyan" "dry run" "$planned" "$reset"
+printf '  %s[*] %-9s %d%s\n' "$magenta" "forced" "$forced" "$reset"
+printf '  %s[!] %-9s %d%s\n' "$red" "invalid" "$invalid" "$reset"
+
+[ "$invalid" -eq 0 ]

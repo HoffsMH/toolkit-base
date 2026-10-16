@@ -1,0 +1,7 @@
+#!/bin/bash
+# This script converts underscore, dot, and hyphen followed by a lowercase letter
+# into just the uppercase version of that letter (i.e. camelcases the input).
+
+perl -pe 's/(?:_|[.-])([a-z])/\U$1/g'
+
+

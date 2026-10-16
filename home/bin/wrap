@@ -1,0 +1,18 @@
+#!/bin/bash
+
+# Word-wrap stdin to a given width (default 80), reflowing paragraphs:
+# short lines are joined and each paragraph is refilled to the width.
+#
+# Usage: some-cmd | wrap [width]
+#
+# fmt's width flag differs between GNU (linux) and BSD (macOS), so detect:
+#   GNU:  fmt -w WIDTH
+#   BSD:  fmt WIDTH   (positional)
+
+width="${1:-80}"
+
+if fmt --version >/dev/null 2>&1; then
+  fmt -w "$width"      # GNU
+else
+  fmt "$width"         # BSD / macOS
+fi
