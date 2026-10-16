@@ -42,8 +42,11 @@ feature), each its own git repo. Open items live in OPEN-QUESTIONS.md.
 - Tailscale is part of base (auth bootstrap): packages/pacman.txt,
   packages/brew.txt, setup.d/tailscaled.sh, verify.d/tailscale.sh,
   NEXT.txt. The old tailscale/ toolkit is deleted.
-- hosts/ toolkit (private, git init, no commits): closet and office ssh
-  entries in home/.ssh/config.d/hosts. To be pushed to closet.
+- tailscale-hosts/ toolkit (private, on closet): ssh entries for closet,
+  office, fwd and mhs-macbook-pro; herdr machines; atuin sync through
+  closet. Base's atuin config is local-only until it is installed.
+- work/ toolkit (private, on closet): gcloud, work GitHub ssh alias,
+  git URL rewrites for the work orgs.
 - Private toolkits are cloned from closet:
   git clone git@closet:toolkits/<name>.git ~/infra/toolkits/<name>
 - base .ssh/config now includes ~/.ssh/config.d/* so other toolkits

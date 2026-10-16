@@ -26,9 +26,10 @@ Leaning = current suggestion, not a decision.
    `.done` marker files.
 
 ## base contents
-10. .zshrc: drop the gcloud work lines? Where does the Wayland fix go?
-11. (Resolved: closet/office host entries live in the private hosts
-    toolkit via ~/.ssh/config.d/*.)
+10. (Resolved: the gcloud work lines live in a work toolkit via
+    ~/.zsh/rc.d/*.zsh.) Where does the Wayland fix go?
+11. (Resolved: tailnet host entries, herdr machines and atuin sync live
+    in the private tailscale-hosts toolkit.)
 12. .zsh/functions_and_aliases.sh (282 lines) needs a pass for
     non-base content.
 13. home/bin was picked by name only. Review each script.

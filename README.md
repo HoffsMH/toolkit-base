@@ -48,9 +48,10 @@ How its different from the old infra mono-repo approach
     ~/infra/toolkits/<name>:
 
     ~/infra/toolkits/
-      base/       cloned over https from GitHub
-      hosts/      cloned from git@closet:toolkits/hosts.git
-      secrets/    cloned from git@closet:toolkits/secrets.git
+      base/             cloned over https from GitHub
+      tailscale-hosts/  cloned from git@closet:toolkits/tailscale-hosts.git
+      work/         cloned from git@closet:toolkits/work.git
+      secrets/          cloned from git@closet:toolkits/secrets.git
       ...
 
   - base is the only toolkit cloned from GitHub. Every other one is
