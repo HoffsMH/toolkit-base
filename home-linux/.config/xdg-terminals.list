@@ -1,0 +1,3 @@
+# Terminal emulator preference order for xdg-terminal-exec (Omarchy launches
+# terminals through it). The first found and valid terminal is used.
+com.mitchellh.ghostty.desktop
