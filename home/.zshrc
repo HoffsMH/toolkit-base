@@ -37,6 +37,8 @@ export PATH=$HOME/go/bin:$PATH
 bindkey -e
 bindkey '^e' edit_command
 bindkey '^g' edit_command
+# Ghostty pastes on ctrl+v and passes the key through; quoted-insert would eat the paste.
+bindkey -r '^V'
 
 command -v fastfetch >/dev/null && fastfetch
 
