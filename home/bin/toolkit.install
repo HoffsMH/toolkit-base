@@ -14,6 +14,20 @@ say() { printf '\n== %s: %s\n' "$name" "$*"; }
 
 lines() { [ -f "$1" ] && grep -v '^\s*\(#\|$\)' "$1" || true; }
 
+# "a|b" in a package list: any one of them will do. Skip the line when one is
+# installed (a machine may already have the other build of the same thing),
+# else install the first.
+pick() {
+  local line alt
+  while read -r line; do
+    [[ $line == *"|"* ]] || { echo "$line"; continue; }
+    for alt in ${line//|/ }; do
+      pacman -Qq "$alt" >/dev/null 2>&1 && continue 2
+    done
+    echo "${line%%|*}"
+  done
+}
+
 install_packages() {
   local pkgs
   if [ "$(uname)" = Darwin ]; then
@@ -22,10 +36,10 @@ install_packages() {
     done
     return
   fi
-  pkgs=$(lines "$tk/packages/pacman.txt")
+  pkgs=$(lines "$tk/packages/pacman.txt" | pick)
   # shellcheck disable=SC2086
   [ -z "$pkgs" ] || sudo pacman -S --needed --noconfirm $pkgs
-  pkgs=$(lines "$tk/packages/aur.txt")
+  pkgs=$(lines "$tk/packages/aur.txt" | pick)
   # shellcheck disable=SC2086
   [ -z "$pkgs" ] || yay -S --needed --noconfirm $pkgs
 }
@@ -51,7 +65,7 @@ install_root_files() {
 
 if [ -d "$tk/packages" ]; then say packages; install_packages; fi
 os=$(uname | tr '[:upper:]' '[:lower:]')
-if [ -d "$tk/home" ] || [ -d "$tk/home-$os" ]; then say links; links.set -b "$name"; fi
+if [ -d "$tk/home" ] || [ -d "$tk/home-$os" ]; then say links; "$(dirname "$0")/links.set" -b "$name"; fi
 if [ -d "$tk/root" ]; then say "root files"; install_root_files; fi
 
 for s in "$tk"/setup.d/*.sh; do

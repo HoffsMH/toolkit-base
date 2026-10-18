@@ -1,2 +1,2 @@
 zsh-autopair-git
-zsh-fast-syntax-highlighting-git
+zsh-fast-syntax-highlighting-git|zsh-fast-syntax-highlighting
