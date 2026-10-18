@@ -5,6 +5,10 @@
 # usually holds the manual steps it is waiting on.
 set -euo pipefail
 
+# Setup scripts call base's commands by name; a bare ssh or a first boot may
+# not have ~/bin on PATH yet.
+PATH="$(cd "$(dirname "$0")" && pwd):$HOME/bin:$PATH"
+
 toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
 name=${1:?usage: toolkit.install <toolkit>}
 tk=$toolkits_dir/$name
