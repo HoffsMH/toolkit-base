@@ -136,6 +136,16 @@ for name in "$@"; do
   fi
 done
 
+# Files built from pieces (see pieces.build) are rebuilt after every link
+# change, so they follow the toolkits that are linked right now.
+hooks=${XDG_CONFIG_HOME:-$HOME/.config}/toolkits/after-link.d
+if ! $dry_run && [ -d "$hooks" ]; then
+  for h in "$hooks"/*; do
+    [ -x "$h" ] || continue
+    "$h" || echo "links.set: hook ${h##*/} failed" >&2
+  done
+fi
+
 if [ ${#failed[@]} -gt 0 ]; then
   printf '\nlinks.set: conflicts in: %s\n' "${failed[*]}" >&2
   printf 'Stow skipped those toolkits entirely. Move or adopt each listed file, then rerun.\n' >&2

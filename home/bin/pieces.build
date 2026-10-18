@@ -1,0 +1,101 @@
+#!/usr/bin/env bash
+# Build one config file from the pieces toolkits link into a directory, for
+# programs with no include mechanism (or none that reaches every reader).
+# Each toolkit links its own piece, so the file grows and shrinks with the
+# installed toolkits. Pieces are read in name order.
+#
+#   *.json   deep-merged with jq; later pieces win. Keys the program itself
+#            added to OUT are kept; keys from a removed piece are dropped.
+#   other    concatenated, each piece under a comment naming it and its toolkit
+#
+# Safe to rerun: writes only when the result changes. If the program (or a
+# person) edited a concatenated file since the last build, the edited file is
+# kept as OUT.drift-<time> and the difference is shown, so nothing is lost.
+set -euo pipefail
+
+usage() { echo "Usage: ${0##*/} OUT DIR" >&2; exit 2; }
+[ $# -eq 2 ] || usage
+out=$1 dir=$2
+
+state_dir=${XDG_STATE_HOME:-$HOME/.local/state}/toolkits/pieces
+toolkits_dir=$(readlink -m "${TOOLKITS_DIR:-$HOME/infra/toolkits}")
+mkdir -p "$state_dir" "$(dirname "$out")"
+stamp=$state_dir/$(printf '%s' "$out" | sha256sum | cut -c1-16)
+printf '%s\n' "$out" >"$stamp.out"
+
+shopt -s nullglob
+case $out in
+  *.json) pieces=("$dir"/*.json) ;;
+  *.md) pieces=("$dir"/*.md) ;;
+  *.toml) pieces=("$dir"/*.toml) ;;
+  *) pieces=("$dir"/*) ;;
+esac
+
+# Name the toolkit a piece's link resolves into, or "local".
+owner() {
+  local real
+  real=$(readlink -f "$1")
+  [[ $real == "$toolkits_dir"/* ]] || { echo local; return; }
+  real=${real#"$toolkits_dir"/}
+  echo "${real%%/*}"
+}
+
+note() {
+  case $out in
+    *.md) printf '<!-- %s -->\n' "$*" ;;
+    *) printf '# %s\n' "$*" ;;
+  esac
+}
+
+tmp=$(mktemp "$out.XXXXXX")
+trap 'command rm -f "$tmp"' EXIT
+
+if [[ $out == *.json ]]; then
+  merged=$(if [ ${#pieces[@]} -eq 0 ]; then echo '{}'; else jq -s 'reduce .[] as $p ({}; . * $p)' "${pieces[@]}"; fi)
+  live='{}'
+  [ ! -f "$out" ] || [ -L "$out" ] || live=$(cat "$out")
+  prev='{}'
+  [ ! -f "$stamp.json" ] || prev=$(cat "$stamp.json")
+  # Warn when the program changed a key a piece owns: the piece wins.
+  jq -rn --argjson live "$live" --argjson prev "$prev" --argjson new "$merged" '
+    $new | paths(type != "object") as $p
+    | select(($prev | getpath($p)) != null and ($live | getpath($p)) != ($prev | getpath($p)))
+    | "pieces.build: \($p | map(tostring) | join(".")) was changed outside its piece; the piece wins"' >&2
+  jq -n --argjson live "$live" --argjson prev "$prev" --argjson new "$merged" '
+    (reduce ($prev | [paths(type != "object")][]) as $p ($live; delpaths([$p]))) * $new' >"$tmp"
+  printf '%s\n' "$merged" >"$stamp.json.new"
+else
+  {
+    note "Built by pieces.build from $dir. Edit the pieces, not this file."
+    for p in "${pieces[@]}"; do
+      printf '\n'
+      note "piece: ${p##*/} (toolkit: $(owner "$p"))"
+      cat "$p"
+    done
+  } >"$tmp"
+fi
+
+# A link here is from an older layout; the built file replaces it.
+[ ! -L "$out" ] || command rm "$out"
+
+if [ -f "$out" ] && [[ $out == *.json ]]; then
+  mv "$stamp.json.new" "$stamp.json"
+  if cmp -s "$tmp" "$out"; then exit 0; fi
+elif [ -f "$out" ]; then
+  if cmp -s "$tmp" "$out"; then
+    sha256sum "$out" | cut -d' ' -f1 >"$stamp"
+    exit 0
+  fi
+  if [ ! -f "$stamp" ] || [ "$(sha256sum "$out" | cut -d' ' -f1)" != "$(cat "$stamp")" ]; then
+    kept=$out.drift-$(date +%Y%m%d-%H%M%S)
+    cp -p "$out" "$kept"
+    echo "pieces.build: $out was edited outside its pieces; kept as $kept" >&2
+    diff -u "$tmp" "$out" >&2 || true
+  fi
+fi
+
+[ ! -f "$stamp.json.new" ] || mv "$stamp.json.new" "$stamp.json"
+chmod 644 "$tmp"
+mv "$tmp" "$out"
+sha256sum "$out" | cut -d' ' -f1 >"$stamp"
+echo "built $out from ${#pieces[@]} piece(s)"

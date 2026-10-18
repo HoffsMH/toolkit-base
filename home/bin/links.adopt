@@ -1,164 +1,47 @@
-#!/bin/bash
+#!/usr/bin/env bash
+# Move one regular file from $HOME into a toolkit and link it back, so the
+# toolkit owns it from now on. Refuses (and changes nothing) when the file is
+# a link, a folder, outside $HOME, already in a toolkit, or when the toolkit
+# already ships that path.
+set -euo pipefail
 
-dry_run=false
-layer=""
-usage='Usage: %s [-n|--dry-run] [-l|--layer LAYER] FILE\n'
-
-while [ $# -gt 0 ]; do
-  case "$1" in
-    -n|--dry-run) dry_run=true; shift ;;
-    -l|--layer)
-      [ $# -ge 2 ] || { printf "$usage" "${0##*/}" >&2; exit 2; }
-      layer="$2"; shift 2
-      ;;
-    -h|--help)
-      printf "$usage\n" "${0##*/}"
-      printf 'Adopt one HOME file into a platform layer of the infra dotfiles.\n'
-      printf 'LAYER defaults to the least specific platform layer (linux-arch, mac).\n'
-      exit 0
-      ;;
-    --) shift; break ;;
-    -*)
-      printf "$usage" "${0##*/}" >&2
-      exit 2
-      ;;
-    *) break ;;
+usage() { printf 'Usage: %s [-n] [-o] TOOLKIT FILE\n  -n  dry run\n  -o  this OS only (home-linux/ or home-darwin/)\n' "${0##*/}" >&"${1:-2}"; exit "${2:-2}"; }
+dry_run=false os_only=false
+while getopts noh opt; do
+  case $opt in
+    n) dry_run=true ;;
+    o) os_only=true ;;
+    h) usage 1 0 ;;
+    *) usage ;;
   esac
 done
+shift $((OPTIND - 1))
+[ $# -eq 2 ] || usage
 
-if [ $# -ne 1 ]; then
-  printf "$usage" "${0##*/}" >&2
-  exit 2
-fi
+toolkits_dir=$(readlink -m "${TOOLKITS_DIR:-$HOME/infra/toolkits}")
+kit=$1 file=$(readlink -m "$2")
+os=$(uname | tr '[:upper:]' '[:lower:]')
+no() { echo "links.adopt: $*; nothing changed" >&2; exit 1; }
 
-if [ -d "$HOME/infra" ]; then
-  infradir="$HOME/infra"
-elif [ -d "/opt/infra" ]; then
-  infradir="/opt/infra"
-else
-  printf 'Error: infra directory not found in %s or /opt/infra\n' "$HOME" >&2
-  exit 1
-fi
+[ -d "$toolkits_dir/$kit" ] || no "no toolkit $toolkits_dir/$kit"
+[ ! -L "$2" ] || no "$2 is already a link -> $(readlink "$2")"
+[ -f "$file" ] || no "$2 is not a regular file"
+[[ $file == "$HOME"/* ]] || no "$file is outside \$HOME"
+[[ $file != "$toolkits_dir"/* ]] || no "$file is already inside a toolkit"
 
-# Dotfile layers under assets/workstation/, least specific first. Arch-family
-# Linux gets linux-arch; Omarchy adds its own layer on top of that.
-read -r os_id os_like < <(
-  ID= ID_LIKE=
-  if [ -f /etc/os-release ]; then
-    . /etc/os-release
-  elif [ -f /usr/lib/os-release ]; then
-    . /usr/lib/os-release
-  fi
-  printf '%s %s\n' "$ID" "$ID_LIKE"
-)
-
-layers=(common)
-if [ "$(uname)" = "Darwin" ]; then
-  layers+=(mac)
-elif [ "$(uname)" = "Linux" ] && [[ " $os_id $os_like " = *" arch "* ]]; then
-  layers+=(linux-arch)
-  [ "$os_id" = omarchy ] && layers+=(omarchy)
-else
-  printf 'Unsupported platform: %s %s\n' "$(uname)" "$os_id" >&2
-  exit 1
-fi
-
-# Promotion to common is a manual decision, so common is never a target. The
-# default is the least specific platform layer: desktop-specific files (omarchy)
-# have to be asked for.
-[ -n "$layer" ] || layer="${layers[1]}"
-if [ "$layer" = common ] || [[ " ${layers[*]} " != *" $layer "* ]]; then
-  printf 'Error: layer must be one of: %s\n' "${layers[*]:1}" >&2
-  exit 2
-fi
-
-if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
-  green=$'\033[32m'
-  yellow=$'\033[33m'
-  cyan=$'\033[36m'
-  bold=$'\033[1m'
-  dim=$'\033[2m'
-  reset=$'\033[0m'
-else
-  green=""
-  yellow=""
-  cyan=""
-  bold=""
-  dim=""
-  reset=""
-fi
-
-warn() {
-  printf '%s[NOOP]%s %s\n' "$yellow" "$reset" "$1" >&2
-  exit 1
-}
-
-input="$1"
-case "$input" in
-  /*) input_path="$input" ;;
-  *) input_path="$PWD/$input" ;;
-esac
-
-if [ -L "$input_path" ]; then
-  link_target=$(readlink "$input_path")
-  warn "source is already a symlink: $input_path -> $link_target"
-fi
-[ -d "$input_path" ] && warn "source is a directory: $input_path"
-[ -e "$input_path" ] || warn "source does not exist: $input_path"
-[ -f "$input_path" ] || warn "source is not a regular file: $input_path"
-[ -r "$input_path" ] || warn "source is not readable: $input_path"
-
-source_dir=$(cd -P "$(dirname "$input_path")" 2>/dev/null && pwd -P) || \
-  warn "cannot resolve source directory: $(dirname "$input_path")"
-source="$source_dir/$(basename "$input_path")"
-home_root=$(cd -P "$HOME" 2>/dev/null && pwd -P) || warn "cannot resolve HOME: $HOME"
-infra_root=$(cd -P "$infradir" 2>/dev/null && pwd -P) || warn "cannot resolve infra: $infradir"
-
-case "$source" in
-  "$home_root"/*) ;;
-  *) warn "source is outside HOME: $source" ;;
-esac
-
-case "$source" in
-  "$infra_root"|"$infra_root"/*) warn "source is already inside infra: $source" ;;
-esac
-
-relative=${source#"$home_root"}
-layer_target="$infradir/assets/workstation/$layer/dotfiles$relative"
-
-for active in "${layers[@]}"; do
-  existing="$infradir/assets/workstation/$active/dotfiles$relative"
-  if [ -e "$existing" ] || [ -L "$existing" ]; then
-    warn "$active dotfile already exists: $existing"
-  fi
+rel=${file#"$HOME"/}
+for d in home "home-$os"; do
+  [ ! -e "$toolkits_dir/$kit/$d/$rel" ] || no "$kit already ships $d/$rel"
 done
+dir=home
+! $os_only || dir=home-$os
+dest=$toolkits_dir/$kit/$dir/$rel
 
-printf '%slinks.adopt%s  %s%s%s\n' "$bold" "$reset" "$dim" "$layer" "$reset"
-printf '  source: %s\n' "$source"
-printf '  target: %s\n' "$layer_target"
-
-if [ "$dry_run" = true ]; then
-  printf '  %s[?] would copy and link%s\n' "$cyan" "$reset"
-  exit 0
+echo "adopt ~/$rel -> $kit/$dir/$rel"
+$dry_run && exit 0
+mkdir -p "$(dirname "$dest")"
+mv "$file" "$dest"
+if ! "$(dirname "$0")/links.set" "$kit"; then
+  mv "$dest" "$file"
+  no "links.set failed; moved the file back"
 fi
-
-target_dir=$(dirname "$layer_target")
-temporary_link="$source.links-adopt.$$"
-if [ -e "$temporary_link" ] || [ -L "$temporary_link" ]; then
-  warn "temporary path already exists: $temporary_link"
-fi
-
-mkdir -p "$target_dir" || warn "cannot create target directory: $target_dir"
-cp -p "$source" "$layer_target" || warn "copy failed: $layer_target"
-
-if ! ln -s "$layer_target" "$temporary_link"; then
-  warn "could not create replacement symlink: $temporary_link"
-fi
-
-if ! mv -f "$temporary_link" "$source"; then
-  command rm -f "$temporary_link"
-  warn "could not replace source with symlink: $source"
-fi
-
-printf '  %s[+] adopted into %s%s\n' "$green" "$layer" "$reset"
-printf '  %sReview the infra copy before promoting it to common.%s\n' "$dim" "$reset"

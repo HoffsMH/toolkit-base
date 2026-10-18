@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Git reads one file per scope and cannot include a directory, so
+# ~/.config/git/config is built from the pieces toolkits link into config.d.
+exec "$HOME/bin/pieces.build" "$HOME/.config/git/config" "$HOME/.config/git/config.d"

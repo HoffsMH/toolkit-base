@@ -50,7 +50,8 @@ install_root_files() {
 }
 
 if [ -d "$tk/packages" ]; then say packages; install_packages; fi
-if [ -d "$tk/home" ]; then say links; links.set -b "$name"; fi
+os=$(uname | tr '[:upper:]' '[:lower:]')
+if [ -d "$tk/home" ] || [ -d "$tk/home-$os" ]; then say links; links.set -b "$name"; fi
 if [ -d "$tk/root" ]; then say "root files"; install_root_files; fi
 
 for s in "$tk"/setup.d/*.sh; do

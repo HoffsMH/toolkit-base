@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Start a private toolkit: ~/infra/toolkits/<name> with a README stub, and an
+# empty repo on closet as its origin. Safe to rerun: skips what exists.
+set -euo pipefail
+[ $# -eq 1 ] && [[ $1 =~ ^[a-z0-9][a-z0-9-]*$ ]] || { echo "Usage: ${0##*/} NAME (lowercase, dashes)" >&2; exit 2; }
+name=$1
+dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}/$name
+remote=${TOOLKIT_REMOTE_HOST:-closet}
+repo=/mnt/app-data/git/toolkits/$name.git
+
+mkdir -p "$dir"
+[ -d "$dir/.git" ] || git -C "$dir" init -q -b master
+[ -f "$dir/README.md" ] || printf '%s: <one-line summary>\n\nPrivate; lives on %s as git@%s:toolkits/%s.git.\n' \
+  "$name" "$remote" "$remote" "$name" >"$dir/README.md"
+# The git user owns the repos; o-rwx keeps them private on closet.
+# shellcheck disable=SC2029
+ssh "$remote" "[ -d $repo ] || { sudo -n -u git git init -q --bare -b master $repo && sudo -n -u git chmod -R g+rX,o-rwx $repo; }"
+git -C "$dir" remote get-url origin >/dev/null 2>&1 || git -C "$dir" remote add origin "git@$remote:toolkits/$name.git"
+echo "$dir -> $(git -C "$dir" remote get-url origin)"
