@@ -78,11 +78,33 @@ drop_absolute_links() {
 # With -b, a regular file where a link should go (a distro default, say) is
 # moved aside rather than reported as a conflict, and a dangling link or a
 # link into the old infra layout is dropped (its target stays in that repo).
+# An old link on a parent folder (dangling, or into the old layout) hides
+# every file under it from stow; drop it the same way.
+drop_old_parent() {
+  local rel=$1 p=$HOME part parts
+  IFS=/ read -r -a parts <<<"${rel%/*}"
+  for part in "${parts[@]}"; do
+    p=$p/$part
+    [ -L "$p" ] || continue
+    [ ! -e "$p" ] || [[ $(readlink -m "$p") == "$legacy_dir"/* ]] || continue
+    if $dry_run; then
+      echo "would replace old folder link: ${p#"$HOME"/} -> $(readlink "$p")"
+    else
+      dropped+=("$p" "$(readlink "$p")")
+      echo "replacing old folder link: ${p#"$HOME"/} -> $(readlink "$p")"
+      rm "$p"
+    fi
+    return
+  done
+}
+
 moved=()
 move_aside() {
-  local src=$1 f t
+  local src=$1 f t rel
   while IFS= read -r -d '' f; do
-    t="$HOME/${f#"$src"/}"
+    rel=${f#"$src"/}
+    [[ $rel != */* ]] || drop_old_parent "$rel"
+    t="$HOME/$rel"
     if [ -L "$t" ] && { [ ! -e "$t" ] || [[ $(readlink -m "$t") == "$legacy_dir"/* ]]; }; then
       if $dry_run; then
         echo "would replace old link: ${t#"$HOME"/} -> $(readlink "$t")"
