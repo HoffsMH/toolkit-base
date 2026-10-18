@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Import session env into systemd-user (for gpg-agent pinentry)
+Comment=Gives systemd-user and DBus activation the graphical session's display variables, then restarts gpg-agent so it can draw the YubiKey PIN prompt. Without it, YubiKey ssh fails with "Permission denied (publickey)".
+Exec=sh -c "dbus-update-activation-environment --systemd WAYLAND_DISPLAY DISPLAY XDG_CURRENT_DESKTOP XDG_SESSION_TYPE && systemctl --user restart gpg-agent.service"
+NoDisplay=true
+X-GNOME-Autostart-enabled=true

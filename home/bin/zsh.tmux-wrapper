@@ -1,0 +1,17 @@
+#!/bin/bash
+
+workingDir=.
+cmd=${1:-zsh}
+name="zsh-main"
+
+# Get the current tmux session ID
+current_session=$(tmux display-message -p '#S')
+
+# Check if a window named "edit" exists in the current session
+if ! tmux list-windows -t "$current_session" | grep -q "$name"; then
+    # Create a new window in the current session with the desired command
+    tmux new-window -n "$name" -c "$workingDir" "$cmd"
+else
+    # Activate the "edit" window in the current session
+    tmux select-window -t "${current_session}:${name}"
+fi

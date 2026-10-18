@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# Herdr counterpart of lzg.tmux-wrapper. tmux session -> herdr workspace,
+# tmux window -> herdr tab, so this is find-or-create per workspace.
+set -euo pipefail
+
+readonly tab_label=lazygit
+readonly command_name=${1:-lazygit}
+
+readonly herdr=${HERDR_BIN_PATH:-herdr}
+# Keybind commands get HERDR_ACTIVE_*; a plain shell inside a pane gets HERDR_*.
+readonly workspace=${HERDR_ACTIVE_WORKSPACE_ID:-${HERDR_WORKSPACE_ID:-}}
+readonly working_dir=${HERDR_ACTIVE_PANE_CWD:-$PWD}
+
+if [ -z "$workspace" ]; then
+  printf '%s: not running inside herdr\n' "${0##*/}" >&2
+  exit 1
+fi
+
+existing=$("$herdr" tab list --workspace "$workspace" |
+  jq -r --arg label "$tab_label" \
+    'first(.result.tabs[] | select(.label == $label) | .tab_id) // empty')
+
+if [ -n "$existing" ]; then
+  exec "$herdr" tab focus "$existing" >/dev/null
+fi
+
+pane=$("$herdr" tab create \
+  --workspace "$workspace" --label "$tab_label" --cwd "$working_dir" --focus |
+  jq -r '.result.root_pane.pane_id')
+
+# exec replaces the pane's shell, so quitting lazygit ends the pane process and
+# herdr closes the now-empty tab - same as tmux new-window "lazygit".
+"$herdr" pane run "$pane" "exec $command_name" >/dev/null

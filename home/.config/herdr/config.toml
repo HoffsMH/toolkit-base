@@ -1,0 +1,159 @@
+onboarding = false
+# Mirrors the Omarchy tmux config in config/tmux/tmux.conf
+# tmux session -> herdr workspace, tmux window -> herdr tab, tmux pane -> herdr pane
+
+[theme]
+# tmux ran on the terminal's own palette (bg=default, fg=default, ANSI blue accents)
+name = "terminal"
+
+auto_switch = false
+[theme.custom]
+# The active tab is drawn as panel_bg text on an accent background, so panel_bg
+# has to be dark for it to read - same colors as status-left's "#[fg=black,bg=blue]"
+panel_bg = "black"
+
+[terminal]
+# Matches -c "#{pane_current_path}" on every split, window, and session
+new_cwd = "follow"
+
+[keys]
+# tmux's prefix is C-f (specs/terminal/tmux.md: "left-of-space + F"), but herdr
+# runs nested inside a tmux pane, so tmux swallows ctrl+f before herdr sees it.
+# ctrl+g is the neighbouring finger: ctrl+letter is herdr's only reliable
+# direct-binding class, the emacs-mode shell uses ctrl+g only for list-expand,
+# and xremap makes physical LeftAlt into Control, so this is left-of-space + g.
+# If herdr ever stops being launched from inside tmux, move this to ctrl+f.
+prefix = "ctrl+g"
+
+# Config and help
+# tmux: bind r source-file ~/.config/tmux/tmux.conf
+reload_config = "prefix+r"
+help = "prefix+?"
+detach = "prefix+d"
+
+# tmux's prefix+w tree becomes Herdr's cross-workspace/tab/pane goto picker.
+# The narrower workspace-only picker moves to prefix+a, unbound in both herdr's
+# and tmux's defaults, so prefix+g is free for the lazygit tab below.
+workspace_picker = "prefix+a"
+goto = "prefix+w"
+
+# Copy mode
+copy_mode = "prefix+["
+
+# Panes
+# herdr names splits by divider orientation, inverted from tmux's -h/-v flags:
+#   split_vertical   -> new pane to the RIGHT (tmux: split-window -h)
+#   split_horizontal -> new pane BELOW        (tmux: split-window -v)
+# tmux: bind L split-window -h / bind J split-window -v
+# tmux's no-prefix `bind -n M-enter` can't be mirrored here: tmux grabs alt+enter
+# globally, so it never reaches herdr while herdr runs inside a tmux pane.
+split_vertical = "prefix+shift+l"
+split_horizontal = "prefix+shift+j"
+close_pane = "prefix+x"
+zoom = "prefix+z"
+# herdr's default resize_mode is prefix+r, which reload_config takes above.
+# tmux resized with M-h/j/k/l; here the mouse drags the divider instead.
+resize_mode = ""
+last_pane = "prefix+;"
+
+# tmux: bind h/j/k/l select-pane -L/-D/-U/-R (also herdr's own defaults)
+focus_pane_left = "prefix+h"
+focus_pane_down = "prefix+j"
+focus_pane_up = "prefix+k"
+focus_pane_right = "prefix+l"
+
+# No tmux equivalent; herdr's default prefix+shift+p is taken by previous session
+rename_pane = "prefix+shift+o"
+
+# Windows -> tabs
+# Left-of-space + t, which xremap sends as ctrl+t.
+new_tab = "ctrl+t"
+# tmux default for rename-window is prefix+, ; prefix+r is reload above
+rename_tab = "prefix+comma"
+# tmux: prefix & = kill-window; prefix+k is select-pane -U above
+close_tab = "prefix+ampersand"
+switch_tab = ["prefix+1..9", "alt+1..9"]
+previous_tab = "prefix+left"
+next_tab = "prefix+right"
+
+# Like swap-window -t -1/+1 on M-S-Left/Right
+move_tab_previous = "alt+shift+left"
+move_tab_next = "alt+shift+right"
+
+# Sessions -> workspaces
+new_workspace = "prefix+shift+n"
+rename_workspace = "prefix+shift+w"
+close_workspace = "prefix+shift+d"
+
+[ui]
+accent = "blue"
+
+# tmux drew single-line dividers between adjacent panes and no outer frame
+pane_gaps = false
+pane_outer_borders = false
+
+# tmux had no scrollbar column beside its panes
+pane_scrollbars = false
+
+# kill-window and kill-session never asked
+confirm_close = false
+
+# automatic-rename gave windows a name without prompting
+prompt_new_tab_name = false
+
+# set -g mouse on
+mouse_capture = true
+
+# status-right had the zoom flag followed by #h
+tab_bar_right = [{ type = "zoom" }, { type = "hostname" }]
+
+# set -g set-titles on / set -g set-titles-string '#h:#W', where tmux's #W was
+# the basename of the pane cwd. This is what Hyprland shows in the group bar,
+# and it resolves on the server so remote sessions name the remote host.
+window_title = "{hostname}: {workspace}"
+
+# tmux never made noise. herdr plays an mp3 whenever an agent pane changes
+# state in a background workspace or tab; off by default here.
+status_indicators = "symbols"
+[ui.sound]
+enabled = false
+
+# Promote the focused split pane into its own new tab, then switch to it.
+# `pane move --focus` alone moves server-side focus but the client view stays
+# put, so the wrapper follows up with an explicit tab focus.
+[[keys.command]]
+key = "prefix+p"
+type = "shell"
+command = "$HOME/bin/pane-to-tab.herdr-wrapper"
+description = "move pane to new tab"
+
+# tmux-style last-window and last-session toggles, supplied by last-focus.
+[[keys.command]]
+key = "prefix+space"
+type = "plugin_action"
+command = "infra.last-focus.last-tab"
+description = "switch to last tab"
+
+[[keys.command]]
+key = "prefix+n"
+type = "plugin_action"
+command = "infra.last-focus.last-workspace"
+description = "switch to last workspace"
+
+# tmux: bind-key -r g run-shell "~/bin/lzg.tmux-wrapper". Find-or-create a
+# "lazygit" tab in the active workspace; quitting lazygit with q closes the tab.
+[[keys.command]]
+key = "prefix+g"
+type = "shell"
+command = "$HOME/bin/lzg.herdr-wrapper"
+description = "lazygit tab"
+
+# Force every enabled remote machine to disconnect and reconnect. The client
+# picks that up by watching the saved-machine catalog, so the wrapper sweeps all
+# machines down, waits, then brings them back up: disabling and re-enabling one
+# machine back to back writes two states the watcher reads as no change.
+[[keys.command]]
+key = "prefix+shift+r"
+type = "shell"
+command = "$HOME/bin/herdr-reconnect.herdr-wrapper"
+description = "reconnect remote machines"

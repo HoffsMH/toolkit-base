@@ -1,0 +1,8 @@
+#!/bin/bash
+
+source "$HOME/.envrc"
+
+if [ -f "$CAP_FILE" ];
+then
+  cat $CAP_FILE | etmpl | hsplit $CAP_DIR  && \rm $CAP_FILE
+fi

@@ -1,0 +1,16 @@
+#!/bin/bash
+
+jrnldir=~/personal/jrnl/
+jrnlfile=$(mktemp  /tmp/jrnl-XXXX.md)
+
+jrnl.unlock $jrnldir
+
+fd . -tf --base-directory=$jrnldir | tail -n 10 | hcat $jrnldir > $jrnlfile
+
+nvim -c $ $jrnlfile;
+
+cat $jrnlfile | etmpl | hsplit $jrnldir
+
+shred -vuf $jrnlfile && jrnl.lock $jrnldir || echo "Failed to lock"
+
+cp ~/personal/jrnl/*.gpg ~/personal/personal-reference/jrnlarchive/jrnl/

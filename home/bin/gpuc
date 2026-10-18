@@ -1,0 +1,14 @@
+#!/bin/bash
+remotes=$(git remote)
+
+for i in $remotes; do
+  if [[ "$i" = "origin" ]]; then
+    git push $i $(g.bn) $@
+  elif [[ "$i" = "infra" ]]; then
+    # test just pushing everything for infra
+    git push $i $(g.bn) $@
+  else
+    echo "skipping $i"
+  fi
+done
+

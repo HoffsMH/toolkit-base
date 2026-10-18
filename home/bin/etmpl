@@ -1,0 +1,15 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+# Read all input
+my $input = do { local $/; <STDIN> };
+
+# Repeat until no more patterns are found
+1 while $input =~ s/e\{(.*?)\}/
+    my $cmd = $1;
+    chomp(my $output = `$cmd`);
+    $output
+/ge;
+
+print $input;

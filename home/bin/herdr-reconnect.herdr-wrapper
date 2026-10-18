@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Herdr prefix+shift+r: drop and reconnect every enabled machine.
+# The client reconnects by watching the saved-machine catalog, so disable and
+# enable have to land as two separate states; back-to-back writes collapse into
+# no visible change. Sweep all machines down, settle, then bring them all up.
+set -euo pipefail
+
+readonly herdr=${HERDR_BIN_PATH:-herdr}
+readonly settle=${HERDR_RECONNECT_SETTLE:-2}
+
+mapfile -t ids < <("$herdr" machine list --json | jq -r '.[] | select(.enabled) | .id')
+[ "${#ids[@]}" -gt 0 ] || exit 0
+
+for id in "${ids[@]}"; do "$herdr" machine disable "$id" >/dev/null; done
+sleep "$settle"
+for id in "${ids[@]}"; do "$herdr" machine enable "$id" >/dev/null; done
+
+# The card requires a touch per authentication and background ssh cannot ask.
+"$herdr" notification show "Reconnecting ${#ids[@]} machines" \
+  --body "Touch the YubiKey once per machine" --sound none >/dev/null

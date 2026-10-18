@@ -1,0 +1,10 @@
+# Linux-specific Ghostty settings for the Omarchy workstation.
+gtk-toolbar-style = flat
+
+# xremap changes the left-of-spacebar key to Ctrl.
+keybind = alt+shift+enter=csi:13;4u
+keybind = unconsumed:ctrl+v=paste_from_clipboard
+
+# async-backend = epoll was removed on 2026-09-14: Ghostty 1.3.1's epoll path
+# crashes the io thread (omacom/omarchy#6868, mitchellh/libxev#234).
+# The default io_uring backend only inflates iowait readings.

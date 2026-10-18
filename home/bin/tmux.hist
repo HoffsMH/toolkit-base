@@ -1,0 +1,20 @@
+#!/bin/bash
+
+set -euo pipefail
+
+target=${1:?missing pane id}
+tmp=$(mktemp)
+
+command=$(tmux display-message -pt "$target" '#{pane_current_command}')
+transcript=$(tmux show-option -pt "$target" -qv @claude_transcript)
+
+if [[ $command == claude && -r $transcript && -x $HOME/bin/claude.transcript ]]; then
+  "$HOME/bin/claude.transcript" "$transcript" > "$tmp"
+else
+  tmux capture-pane -pt "$target" -S -1000000 > "$tmp"
+fi
+
+if ! tmux new-window -n history "$HOME/bin/tmux.hist.view '$tmp'"; then
+  command rm -f "$tmp"
+  exit 1
+fi

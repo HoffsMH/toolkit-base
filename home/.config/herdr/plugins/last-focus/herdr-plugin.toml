@@ -1,0 +1,40 @@
+id = "infra.last-focus"
+name = "Last Focus"
+version = "0.1.0"
+min_herdr_version = "0.9.0"
+platforms = ["linux", "macos"]
+
+[[actions]]
+id = "last-tab"
+title = "Switch to Last Tab"
+contexts = ["workspace"]
+command = ["./last-focus", "last-tab"]
+
+[[actions]]
+id = "last-workspace"
+title = "Switch to Last Workspace"
+contexts = ["workspace"]
+command = ["./last-focus", "last-workspace"]
+
+[[startup]]
+command = ["./last-focus", "startup"]
+
+[[events]]
+on = "workspace.focused"
+command = ["./last-focus", "track"]
+
+[[events]]
+on = "workspace.closed"
+command = ["./last-focus", "track"]
+
+[[events]]
+on = "tab.focused"
+command = ["./last-focus", "track"]
+
+[[events]]
+on = "tab.created"
+command = ["./last-focus", "track"]
+
+[[events]]
+on = "tab.closed"
+command = ["./last-focus", "track"]

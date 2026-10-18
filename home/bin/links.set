@@ -1,26 +1,41 @@
 #!/usr/bin/env bash
-# Link each toolkit's home/ into $HOME with GNU stow, one stow package per
-# toolkit. A machine's toolkits are whatever is cloned under $TOOLKITS_DIR.
+# Link each toolkit's home/ into $HOME with GNU stow, plus home-linux/ or
+# home-darwin/ for this OS. A file belongs to exactly one of them; stow
+# refuses a target two of them provide. A machine's toolkits are whatever is
+# cloned under $TOOLKITS_DIR.
 # Restows, so links to files deleted from a toolkit are removed too.
 # root/ is copied, not linked: see root.set.
 set -euo pipefail
 
+# usage ok: help on stdout, exit 0. Otherwise a usage error.
 usage() {
-  printf 'Usage: %s [-n] [-v] [-b] [-D] [toolkit...]\n' "${0##*/}" >&2
-  printf '  -n  dry run (implies -v)\n  -v  list each link\n' >&2
-  printf '  -b  move a regular file in the way to <file>.pre-toolkit first\n' >&2
-  printf '  -D  remove the links instead\n' >&2
-  exit 2
+  local fd=2 rc=2
+  [ "${1:-}" = ok ] && fd=1 rc=0
+  {
+    printf 'Usage: %s [-n] [-v] [-b] [-D] [toolkit...]\n' "${0##*/}"
+    printf '  -n  dry run (implies -v)\n  -v  list each link\n'
+    printf '  -b  move a regular file in the way to <file>.pre-toolkit first,\n'
+    printf '      and replace dangling links and links into the old infra layout\n'
+    printf '  -D  remove the links instead\n'
+    printf '  -h, --help  show this help\n'
+    printf 'Env: TOOLKITS_DIR (default ~/infra/toolkits),\n'
+    printf '     LINKS_LEGACY_DIR (default ~/infra/assets)\n'
+  } >&"$fd"
+  exit "$rc"
 }
 
+[ "${1:-}" = --help ] && usage ok
+
 toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
+legacy_dir=$(readlink -m "${LINKS_LEGACY_DIR:-$HOME/infra/assets}")
 action=--restow
 dry_run=false
 verbose=0
 backup=false
 
-while getopts nvbD opt; do
+while getopts nvbDh opt; do
   case $opt in
+    h) usage ok ;;
     n) dry_run=true; verbose=1 ;;
     v) verbose=1 ;;
     b) backup=true ;;
@@ -47,7 +62,6 @@ $dry_run && stow_flags+=(--simulate)
 dropped=()
 drop_absolute_links() {
   local src=$1 f t
-  dropped=()
   while IFS= read -r -d '' f; do
     t="$HOME/${f#"$src"/}"
     [ -L "$t" ] && [[ $(readlink "$t") == /* ]] || continue
@@ -62,13 +76,23 @@ drop_absolute_links() {
 }
 
 # With -b, a regular file where a link should go (a distro default, say) is
-# moved aside rather than reported as a conflict.
+# moved aside rather than reported as a conflict, and a dangling link or a
+# link into the old infra layout is dropped (its target stays in that repo).
 moved=()
 move_aside() {
   local src=$1 f t
-  moved=()
   while IFS= read -r -d '' f; do
     t="$HOME/${f#"$src"/}"
+    if [ -L "$t" ] && { [ ! -e "$t" ] || [[ $(readlink -m "$t") == "$legacy_dir"/* ]]; }; then
+      if $dry_run; then
+        echo "would replace old link: ${t#"$HOME"/} -> $(readlink "$t")"
+      else
+        dropped+=("$t" "$(readlink "$t")")
+        echo "replacing old link: ${t#"$HOME"/} -> $(readlink "$t")"
+        rm "$t"
+      fi
+      continue
+    fi
     [ -f "$t" ] && [ ! -L "$t" ] || continue
     [ ! -e "$t.pre-toolkit" ] || { echo "links.set: $t.pre-toolkit exists, not moving $t" >&2; continue; }
     if $dry_run; then
@@ -89,18 +113,24 @@ restore_dropped() {
   for t in "${moved[@]}"; do mv "$t.pre-toolkit" "$t"; done
 }
 
+os=$(uname | tr '[:upper:]' '[:lower:]')
+
 failed=()
 for name in "$@"; do
   pkg="$toolkits_dir/$name"
-  [ -d "$pkg/home" ] || { echo "== $name: no home/, skipped"; continue; }
+  dirs=()
+  for d in home "home-$os"; do [ ! -d "$pkg/$d" ] || dirs+=("$d"); done
+  [ ${#dirs[@]} -gt 0 ] || { echo "== $name: no home/ or home-$os/, skipped"; continue; }
   echo "== $name"
-  # Linked files land in $HOME, so keep them private to this user.
-  $dry_run || chmod -R go-rwx "$pkg/home"
   dropped=() moved=()
-  [ "$action" = --delete ] || drop_absolute_links "$pkg/home"
-  [ "$action" = --delete ] || ! $backup || move_aside "$pkg/home"
+  for d in "${dirs[@]}"; do
+    # Linked files land in $HOME, so keep them private to this user.
+    $dry_run || chmod -R go-rwx "$pkg/$d"
+    [ "$action" = --delete ] || drop_absolute_links "$pkg/$d"
+    [ "$action" = --delete ] || ! $backup || move_aside "$pkg/$d"
+  done
   # stow logs on stderr; send it to stdout so callers can pipe it.
-  if ! stow --dir="$pkg" "${stow_flags[@]}" home 2>&1; then
+  if ! stow --dir="$pkg" "${stow_flags[@]}" "${dirs[@]}" 2>&1; then
     failed+=("$name")
     restore_dropped
   fi

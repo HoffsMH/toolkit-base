@@ -1,0 +1,13 @@
+# Tools wanted on every workstation, mac and arch alike. mise names are
+# manager-independent, so this is the one place a CLI tool gets named -
+# no git-delta/delta split between Brewfile and pacman.
+#
+# mise merges conf.d/*.toml with ~/.config/mise/config.toml, which stays
+# machine-local for per-box pins (node version, one-off tools).
+[tools]
+claude = "latest"
+codex = "latest"
+delta = "latest"
+gh = "latest"
+herdr = "0.9.0"
+"github:can1357/oh-my-pi" = "latest"

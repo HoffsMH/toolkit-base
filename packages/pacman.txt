@@ -3,3 +3,4 @@ stow
 zsh
 direnv
 atuin
+tmux

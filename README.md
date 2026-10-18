@@ -84,6 +84,7 @@ Only the folders a toolkit needs are present.
     <toolkit>/
       README.md       first line: one-line summary
       home/           channel 1: symlinked into $HOME
+      home-linux/     channel 1: same, Linux only (home-darwin/: macOS only)
       root/           channel 1: installed (copied) into /
       packages/       channel 2: pacman.txt, aur.txt, brew.txt, mise.toml
       setup.d/*.sh    channel 3: idempotent commands

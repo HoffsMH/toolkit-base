@@ -1,0 +1,157 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+state_dir=${HERDR_PLUGIN_STATE_DIR:?HERDR_PLUGIN_STATE_DIR is required}
+state_file="$state_dir/focus.json"
+lock_dir="$state_dir/lock"
+herdr_bin=${HERDR_BIN_PATH:-herdr}
+
+mkdir -p "$state_dir"
+
+write_state() {
+  tmp="$state_file.$$.tmp"
+  jq -c '.' >"$tmp"
+  mv "$tmp" "$state_file"
+}
+
+ensure_state() {
+  if [ ! -s "$state_file" ]; then
+    printf '%s\n' '{"workspace":{"current":null,"previous":null},"tabs":{}}' >"$state_file"
+  fi
+}
+
+snapshot_ids() {
+  "$herdr_bin" api snapshot | jq -r \
+    '[.result.snapshot.focused_workspace_id, .result.snapshot.focused_tab_id] | @tsv'
+}
+
+with_lock() {
+  attempts=0
+  until mkdir "$lock_dir" 2>/dev/null; do
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 100 ]; then
+      echo "last-focus: state lock timed out" >&2
+      return 1
+    fi
+    sleep 0.02
+  done
+  trap 'rmdir "$lock_dir" 2>/dev/null || true' EXIT INT TERM
+  ensure_state
+  "$@"
+  status=$?
+  rmdir "$lock_dir"
+  trap - EXIT INT TERM
+  return "$status"
+}
+
+initialize() {
+  ids=$(snapshot_ids)
+  workspace=${ids%%	*}
+  tab=${ids#*	}
+  jq --arg workspace "$workspace" --arg tab "$tab" '
+    .workspace.current = $workspace |
+    .tabs[$workspace] = (.tabs[$workspace] // {current:null, previous:null}) |
+    .tabs[$workspace].current = $tab
+  ' "$state_file" | write_state
+}
+
+track_event() {
+  event_json=${HERDR_PLUGIN_EVENT_JSON:?HERDR_PLUGIN_EVENT_JSON is required}
+  event=$(printf '%s' "$event_json" | jq -r '.event')
+  case "$event" in
+    workspace_focused)
+      workspace=$(printf '%s' "$event_json" | jq -r '.data.workspace_id')
+      jq --arg workspace "$workspace" '
+        if .workspace.current == $workspace then .
+        else .workspace.previous = .workspace.current | .workspace.current = $workspace
+        end
+      ' "$state_file" | write_state
+      ;;
+    tab_focused|tab_created)
+      workspace=$(printf '%s' "$event_json" | jq -r '.data.workspace_id')
+      tab=$(printf '%s' "$event_json" | jq -r '.data.tab_id')
+      if [ "$event" = tab_created ]; then
+        workspace=$(printf '%s' "$event_json" | jq -r '.data.tab.workspace_id')
+        tab=$(printf '%s' "$event_json" | jq -r '.data.tab.tab_id')
+      fi
+      jq --arg workspace "$workspace" --arg tab "$tab" '
+        .tabs[$workspace] = (.tabs[$workspace] // {current:null, previous:null}) |
+        if .tabs[$workspace].current == $tab then .
+        else .tabs[$workspace].previous = .tabs[$workspace].current |
+             .tabs[$workspace].current = $tab
+        end
+      ' "$state_file" | write_state
+      ;;
+    workspace_closed)
+      workspace=$(printf '%s' "$event_json" | jq -r '.data.workspace_id')
+      jq --arg workspace "$workspace" '
+        del(.tabs[$workspace]) |
+        if .workspace.previous == $workspace then .workspace.previous = null else . end |
+        if .workspace.current == $workspace then .workspace.current = null else . end
+      ' "$state_file" | write_state
+      ;;
+    tab_closed)
+      workspace=$(printf '%s' "$event_json" | jq -r '.data.workspace_id')
+      tab=$(printf '%s' "$event_json" | jq -r '.data.tab_id')
+      jq --arg workspace "$workspace" --arg tab "$tab" '
+        if .tabs[$workspace].previous == $tab then .tabs[$workspace].previous = null else . end |
+        if .tabs[$workspace].current == $tab then .tabs[$workspace].current = null else . end
+      ' "$state_file" | write_state
+      ;;
+  esac
+}
+
+last_workspace() {
+  live_workspace=${HERDR_WORKSPACE_ID:-}
+  if [ -z "$live_workspace" ]; then
+    IFS=$'\t' read -r live_workspace _ <<EOF
+$(snapshot_ids)
+EOF
+  fi
+  tracked=$(jq -r '.workspace.current // empty' "$state_file")
+  if [ "$live_workspace" != "$tracked" ]; then
+    jq --arg current "$live_workspace" --arg previous "$tracked" '
+      .workspace.current = $current |
+      .workspace.previous = (if $previous == "" then null else $previous end)
+    ' "$state_file" | write_state
+  fi
+  target=$(jq -r '.workspace.previous // empty' "$state_file")
+  [ -n "$target" ] || return 0
+  jq --arg current "$live_workspace" --arg target "$target" '
+    .workspace.current = $target | .workspace.previous = $current
+  ' "$state_file" | write_state
+  "$herdr_bin" workspace focus "$target"
+}
+
+last_tab() {
+  workspace=${HERDR_WORKSPACE_ID:-}
+  live_tab=${HERDR_TAB_ID:-}
+  if [ -z "$workspace" ] || [ -z "$live_tab" ]; then
+    ids=$(snapshot_ids)
+    workspace=${ids%%	*}
+    live_tab=${ids#*	}
+  fi
+  tracked=$(jq -r --arg workspace "$workspace" '.tabs[$workspace].current // empty' "$state_file")
+  if [ "$live_tab" != "$tracked" ]; then
+    jq --arg workspace "$workspace" --arg current "$live_tab" --arg previous "$tracked" '
+      .tabs[$workspace] = {
+        current: $current,
+        previous: (if $previous == "" then null else $previous end)
+      }
+    ' "$state_file" | write_state
+  fi
+  target=$(jq -r --arg workspace "$workspace" '.tabs[$workspace].previous // empty' "$state_file")
+  [ -n "$target" ] || return 0
+  jq --arg workspace "$workspace" --arg current "$live_tab" --arg target "$target" '
+    .tabs[$workspace].current = $target | .tabs[$workspace].previous = $current
+  ' "$state_file" | write_state
+  "$herdr_bin" tab focus "$target"
+}
+
+case "${1:-}" in
+  startup) with_lock initialize ;;
+  track) with_lock track_event ;;
+  last-workspace) with_lock last_workspace ;;
+  last-tab) with_lock last_tab ;;
+  *) echo "usage: last-focus {startup|track|last-workspace|last-tab}" >&2; exit 64 ;;
+esac

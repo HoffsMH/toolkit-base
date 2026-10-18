@@ -1,0 +1,7 @@
+#!/bin/bash
+
+transcript=$(jq -r '.transcript_path // empty')
+
+if [[ -n ${TMUX_PANE:-} && -n $transcript ]]; then
+  tmux set-option -p -t "$TMUX_PANE" @claude_transcript "$transcript"
+fi

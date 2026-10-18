@@ -1,0 +1,60 @@
+#!/bin/bash
+set -e
+
+# Load environment variables
+source "$HOME/.envrc"
+
+# Default number of files to show
+flagN=10
+
+# Default depth value
+DEPTH=1
+
+# Parse command-line options
+while getopts "d:" opt; do
+  case "$opt" in
+    d)
+      DEPTH="$OPTARG"
+      ;;
+    *)
+      echo "Usage: $0 [-d depth] [directory]" >&2
+      exit 1
+      ;;
+  esac
+done
+
+# Shift away the options processed
+shift $((OPTIND - 1))
+
+# Set the directory.
+# If a positional argument is provided, use it to define CAP_DIR.
+if [[ -n "$1" ]]; then
+    CAP_DIR="$HOME/personal/00-cap-md/$1/"
+else
+    CAP_DIR=${CAP_DIR:-"$HOME/personal/00-cap-md/"}
+fi
+
+# If CAP_FILE exists, sync it
+if [ -f "$CAP_FILE" ]; then
+  ~/bin/cap.sync
+fi
+
+# Find Markdown files in CAP_DIR using the specified depth
+pushd "$CAP_DIR" > /dev/null
+  file_list=$(fd ".**\.md$" --regex -tf \
+                 --base-directory="$CAP_DIR" \
+                 --max-depth="$DEPTH" |  \
+                 basename-sort | \
+                 tail -n "$flagN")
+
+
+popd > /dev/null
+
+echo "$file_list"
+
+# Append the file list to CAP_FILE via hcat, then open it in nvim
+echo "$file_list" | hcat "$CAP_DIR" >> "$CAP_FILE"
+
+~/bin/nvim.cap
+
+find "$CAP_DIR" -depth -type d -empty -delete

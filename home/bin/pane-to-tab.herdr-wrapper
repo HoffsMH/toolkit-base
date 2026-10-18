@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# Herdr prefix+p: promote the focused split pane into its own tab and follow it.
+# `pane move --focus` moves server-side focus to the created tab, but the client
+# view does not follow that; an explicit tab.focus request does.
+set -euo pipefail
+
+readonly herdr=${HERDR_BIN_PATH:-herdr}
+# Keybind commands get HERDR_ACTIVE_*; a plain shell inside a pane gets HERDR_*.
+readonly pane=${HERDR_ACTIVE_PANE_ID:-${HERDR_PANE_ID:-}}
+
+if [ -z "$pane" ]; then
+  printf '%s: not running inside herdr\n' "${0##*/}" >&2
+  exit 1
+fi
+
+tab=$("$herdr" pane move "$pane" --new-tab --focus |
+  jq -r '.result.move_result.pane.tab_id // empty')
+
+[ -n "$tab" ] || exit 0
+exec "$herdr" tab focus "$tab" >/dev/null

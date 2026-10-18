@@ -1,0 +1,479 @@
+#!/usr/bin/env node
+/**
+ * pi-session-to-md — Extract a pi session (JSONL) into readable Markdown.
+ *
+ * Usage:
+ *   pi-session-to-md <session.jsonl> [output.md]
+ *   pi-session-to-md <session.jsonl>          # prints to stdout
+ *   pi-session-to-md --help
+ *
+ * Output is designed for agent analysis: "what went wrong and what could
+ * have been said to keep the agent on track".
+ *
+ * The script walks the session tree from leaf to root, groups messages
+ * into turns (user → assistant + tool results → ... → final assistant),
+ * and formats everything as clean Markdown.
+ */
+
+const fs = require("node:fs");
+const path = require("node:path");
+
+// ── helpers ──────────────────────────────────────────────────────────
+
+function isoShort(iso) {
+  return iso.replace("T", " ").replace(/\.\d+Z$/, "");
+}
+
+function indent(text, spaces = 4) {
+  const pad = " ".repeat(spaces);
+  return text
+    .split("\n")
+    .map((l) => (l ? pad + l : l))
+    .join("\n");
+}
+
+function countTokens(entries) {
+  let input = 0,
+    output = 0;
+  for (const e of entries) {
+    if (e.type !== "message") continue;
+    const u = e.message?.usage;
+    if (!u) continue;
+    input += u.input ?? 0;
+    output += u.output ?? 0;
+  }
+  return { input, output, total: input + output };
+}
+
+function fmtNum(n) {
+  return n.toLocaleString("en-US");
+}
+
+// ── entry parsing ────────────────────────────────────────────────────
+
+function parseEntries(filePath) {
+  const raw = fs.readFileSync(filePath, "utf8").trim();
+  if (!raw) return [];
+  return raw.split("\n").map((line) => JSON.parse(line));
+}
+
+/**
+ * Walk from the last entry up to the root following parentId.
+ * Returns entries in chronological order (root first).
+ */
+function getActivePath(entries) {
+  if (entries.length === 0) return [];
+
+  // Build id → entry map
+  const byId = new Map();
+  for (const e of entries) {
+    if (e.id) byId.set(e.id, e);
+  }
+
+  // Start from the last entry (the leaf)
+  const leaf = entries[entries.length - 1];
+  const path = [];
+  let current = leaf;
+
+  while (current) {
+    path.push(current);
+    if (!current.parentId) break;
+    current = byId.get(current.parentId);
+  }
+
+  return path.reverse();
+}
+
+// ── turn grouping ────────────────────────────────────────────────────
+
+/**
+ * Group message entries into turns.
+ * A turn starts with a user message (or model_change/etc) and includes
+ * all following assistant + toolResult pairs until the next user message.
+ */
+function groupTurns(messageEntries) {
+  const turns = [];
+  let pendingMeta = [];
+
+  for (const entry of messageEntries) {
+    if (entry.type !== "message") {
+      pendingMeta.push(entry);
+      continue;
+    }
+
+    const role = entry.message?.role;
+    if (role === "user") {
+      // Flush pending meta into this new turn
+      turns.push({ meta: pendingMeta, messages: [entry] });
+      pendingMeta = [];
+    } else if (turns.length === 0) {
+      // First message isn't a user message (unusual): create turn
+      turns.push({ meta: pendingMeta, messages: [entry] });
+      pendingMeta = [];
+    } else {
+      turns[turns.length - 1].messages.push(entry);
+    }
+  }
+
+  // Any trailing meta without messages? Attach to last turn.
+  if (pendingMeta.length > 0 && turns.length > 0) {
+    turns[turns.length - 1].meta.push(...pendingMeta);
+  }
+
+  return turns;
+}
+
+// ── markdown rendering ───────────────────────────────────────────────
+
+function renderContentBlocks(blocks) {
+  const parts = [];
+
+  for (const block of blocks) {
+    switch (block.type) {
+      case "text":
+        parts.push(block.text);
+        break;
+
+      case "thinking":
+        parts.push(
+          "<details>\n<summary>🧠 Thinking</summary>\n\n" +
+            block.thinking +
+            "\n\n</details>\n"
+        );
+        break;
+
+      case "toolCall":
+        parts.push(
+          `> 🔧 **\`${block.name}\`**  \`${block.id}\``
+        );
+        if (block.arguments && Object.keys(block.arguments).length > 0) {
+          const args = JSON.stringify(block.arguments, null, 2);
+          if (args.length < 200) {
+            parts.push(`> \`\`\`json\n${indent(args.trim(), 2)}\n> \`\`\``);
+          } else {
+            parts.push(`> _args: ${args.length} chars_`);
+          }
+        }
+        break;
+
+      default:
+        parts.push(`_(unknown content block: ${block.type})_`);
+    }
+  }
+
+  return parts.join("\n");
+}
+
+function renderToolResult(entry, flags) {
+  const m = entry.message;
+  const content = (m.content || [])
+    .filter((c) => c.type === "text")
+    .map((c) => c.text)
+    .join("\n");
+
+  const statusIcon = m.isError ? "❌" : "✅";
+  let out = `> ${statusIcon} **Result: \`${m.toolName}\`**  \`${m.toolCallId}\``;
+
+  if (flags.brief) {
+    if (m.isError) {
+      out += `\n> _Error: ${content.slice(0, 200)}_`;
+    } else {
+      out += ` _(${content.length} chars)_`;
+    }
+    return out;
+  }
+
+  if (content) {
+    const truncated =
+      content.length > 3000
+        ? content.slice(0, 3000) +
+          `\n\n... _(truncated, ${content.length} chars total)_`
+        : content;
+    out += `\n>\n> \`\`\`\n${indent(truncated, 2)}\n> \`\`\``;
+  }
+
+  if (m.details && Object.keys(m.details).length > 0) {
+    out += `\n> _details: ${JSON.stringify(m.details)}_`;
+  }
+
+  return out;
+}
+
+function renderUsage(usage) {
+  if (!usage) return "";
+  const parts = [];
+  if (usage.input) parts.push(`in:${fmtNum(usage.input)}`);
+  if (usage.output) parts.push(`out:${fmtNum(usage.output)}`);
+  if (usage.cacheRead) parts.push(`cache:${fmtNum(usage.cacheRead)}`);
+  if (usage.totalTokens) parts.push(`total:${fmtNum(usage.totalTokens)}`);
+  if (usage.cost?.total > 0) parts.push(`$${usage.cost.total.toFixed(4)}`);
+  return parts.length > 0 ? ` | ${parts.join(" ")}` : "";
+}
+
+function renderAssistant(entry, flags) {
+  const m = entry.message;
+  const blocks = m.content || [];
+  const textBlocks = blocks.filter((b) => b.type === "text");
+  const thinkingBlocks = flags.noThinking ? [] : blocks.filter((b) => b.type === "thinking");
+  const toolCalls = flags.textOnly ? [] : blocks.filter((b) => b.type === "toolCall");
+
+  const header = [
+    `### 🤖 Assistant`,
+    `_${isoShort(entry.timestamp)}_`,
+  ];
+  if (m.provider || m.model) {
+    header.push(`\`${m.provider || ""}/${m.model || ""}\``);
+  }
+  header.push(renderUsage(m.usage));
+
+  const out = [header.join(" ")];
+
+  // Stop reason (only show if interesting)
+  if (m.stopReason && m.stopReason !== "stop") {
+    out.push(`\n⏹️ Stop: **${m.stopReason}**`);
+  }
+
+  if (m.errorMessage) {
+    out.push(`\n⚠️ **Error:** ${m.errorMessage}`);
+  }
+
+  // Thinking blocks
+  for (const t of thinkingBlocks) {
+    out.push(
+      `\n<details>\n<summary>🧠 Thinking</summary>\n\n${t.thinking}\n\n</details>`
+    );
+  }
+
+  // Text blocks
+  const text = textBlocks.map((t) => t.text).join("");
+  if (text.trim()) {
+    out.push(`\n${text.trim()}`);
+  }
+
+  // Tool calls
+  for (const tc of toolCalls) {
+    out.push(`\n> 🔧 **\`${tc.name}\`**  \`${tc.id}\``);
+    if (!flags.brief && tc.arguments && Object.keys(tc.arguments).length > 0) {
+      const argsStr = JSON.stringify(tc.arguments);
+      if (argsStr.length < 300) {
+        out.push(`> \`\`\`json\n${indent(argsStr, 2)}\n> \`\`\``);
+      } else {
+        out.push(`> _args (${argsStr.length} chars)_`);
+      }
+    }
+  }
+
+  return out.join("\n");
+}
+
+function renderTurnMessages(msgs, flags) {
+  const out = [];
+
+  for (const entry of msgs) {
+    const role = entry.message?.role;
+
+    if (role === "user") {
+      const text = (entry.message.content || [])
+        .filter((c) => c.type === "text")
+        .map((c) => c.text)
+        .join("\n");
+      const images = (entry.message.content || []).filter(
+        (c) => c.type === "image"
+      );
+
+      out.push(`### 👤 User _${isoShort(entry.timestamp)}_`);
+      if (images.length > 0) {
+        out.push(`🖼️ _${images.length} image(s) attached_`);
+      }
+      if (text.trim()) {
+        out.push(`\n${text.trim()}`);
+      }
+    } else if (role === "assistant") {
+      out.push(renderAssistant(entry, flags));
+    } else if (role === "toolResult") {
+      if (!flags.textOnly) {
+        out.push(renderToolResult(entry, flags));
+      }
+    } else if (role === "bashExecution") {
+      if (flags.textOnly) continue;
+      const m = entry.message;
+      out.push(
+        `> 💻 **\`! ${m.command}\`** — exit: ${m.exitCode ?? "?"}${
+          m.cancelled ? " (cancelled)" : ""
+        }`
+      );
+      if (!flags.brief && m.output) {
+        const truncated =
+          m.output.length > 3000
+            ? m.output.slice(0, 3000) +
+              `\n\n... _(truncated, ${m.output.length} chars total)_`
+            : m.output;
+        out.push(`>\n> \`\`\`\n${indent(truncated, 2)}\n> \`\`\``);
+      }
+    } else {
+      out.push(`> _(unknown message role: ${role})_`);
+    }
+  }
+
+  return out.join("\n\n");
+}
+
+// ── main ─────────────────────────────────────────────────────────────
+
+function parseOpts(argv) {
+  const flags = {
+    brief: false,
+    noThinking: false,
+    textOnly: false,
+    help: false,
+  };
+  const positional = [];
+
+  for (const arg of argv) {
+    switch (arg) {
+      case "--brief":
+      case "-b":
+        flags.brief = true;
+        break;
+      case "--no-thinking":
+      case "-T":
+        flags.noThinking = true;
+        break;
+      case "--text-only":
+      case "-t":
+        flags.textOnly = true;
+        break;
+      case "--help":
+      case "-h":
+        flags.help = true;
+        break;
+      default:
+        positional.push(arg);
+    }
+  }
+
+  return { flags, inputFile: positional[0], outputFile: positional[1] };
+}
+
+function main() {
+  const { flags, inputFile, outputFile } = parseOpts(process.argv.slice(2));
+
+  if (flags.help) {
+    console.log(`Usage: pi-session-to-md [options] <session.jsonl> [output.md]
+
+Extract a pi session into readable Markdown for agent analysis.
+
+Options:
+  -b, --brief       Collapse tool outputs (names + success/failure only)
+  -T, --no-thinking Omit thinking blocks entirely
+  -t, --text-only   Only user messages and assistant text (no tools)
+  -h, --help        Show this help
+
+Examples:
+  pi-session-to-md session.jsonl
+  pi-session-to-md -b session.jsonl analysis.md
+  pi-session-to-md --text-only ~/.pi/agent/sessions/**/latest.jsonl`);
+    process.exit(0);
+  }
+
+  if (!inputFile) {
+    console.error("Error: session file path required.");
+    console.error("Usage: pi-session-to-md [options] <session.jsonl> [output.md]");
+    process.exit(1);
+  }
+
+  if (!fs.existsSync(inputFile)) {
+    console.error(`Error: file not found: ${inputFile}`);
+    process.exit(1);
+  }
+
+  // Parse
+  const entries = parseEntries(inputFile);
+  const activePath = getActivePath(entries);
+
+  // Get session header
+  const header = entries.find((e) => e.type === "session");
+  const modelChanges = activePath.filter((e) => e.type === "model_change");
+  const lastModel = modelChanges[modelChanges.length - 1];
+
+  // Token totals
+  const tokens = countTokens(activePath);
+
+  // Group into turns
+  const turns = groupTurns(activePath);
+
+  // Build markdown
+  const lines = [];
+
+  // Header
+  const sessionId =
+    header?.id || path.basename(inputFile, ".jsonl").slice(0, 8);
+  lines.push(`# Session: \`${sessionId}\``);
+  lines.push("");
+
+  const metaItems = [];
+  if (header?.cwd) metaItems.push(`**Project:** \`${header.cwd}\``);
+  if (header?.timestamp) metaItems.push(`**Started:** ${isoShort(header.timestamp)}`);
+  if (lastModel)
+    metaItems.push(
+      `**Model:** \`${lastModel.provider}/${lastModel.modelId}\``
+    );
+  if (tokens.total > 0)
+    metaItems.push(
+      `**Tokens:** ${fmtNum(tokens.total)} (in: ${fmtNum(
+        tokens.input
+      )}, out: ${fmtNum(tokens.output)})`
+    );
+
+  lines.push(metaItems.join(" | "));
+  lines.push("");
+  lines.push("---");
+  lines.push("");
+
+  // Turns
+  for (let i = 0; i < turns.length; i++) {
+    const turn = turns[i];
+    const hasContent = turn.messages.length > 0;
+
+    if (!hasContent) continue;
+
+    lines.push(`## Turn ${i + 1}`);
+    lines.push("");
+
+    // Meta entries before messages (model changes, etc.)
+    for (const meta of turn.meta) {
+      if (meta.type === "model_change") {
+        lines.push(
+          `> 🔄 Model change: \`${meta.provider}/${meta.modelId}\` _${isoShort(meta.timestamp)}_`
+        );
+      } else if (meta.type === "thinking_level_change") {
+        lines.push(
+          `> 🧩 Thinking level: **${meta.thinkingLevel}** _${isoShort(meta.timestamp)}_`
+        );
+      } else if (meta.type === "compaction") {
+        lines.push(
+          `> 📦 Compaction (${fmtNum(meta.tokensBefore)} tokens before) _${isoShort(meta.timestamp)}_`
+        );
+        if (meta.summary) {
+          lines.push(`>\n> ${meta.summary.replace(/\n/g, "\n> ")}`);
+        }
+      }
+    }
+
+    lines.push(renderTurnMessages(turn.messages, flags));
+    lines.push("");
+    lines.push("---");
+    lines.push("");
+  }
+
+  const output = lines.join("\n") + "\n";
+
+  if (outputFile) {
+    fs.writeFileSync(outputFile, output);
+    console.error(`Wrote ${outputFile} (${output.length.toLocaleString()} bytes)`);
+  } else {
+    process.stdout.write(output);
+  }
+}
+
+main();

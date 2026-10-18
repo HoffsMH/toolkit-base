@@ -1,0 +1,14 @@
+#!/bin/bash
+
+# touch that builds path to the file if it doesnt exist
+
+if [ $# -lt 1 ]; then
+  echo "Missing argument";
+  return 1;
+fi
+
+for f in "$@"; do
+  mkdir -p -- "$(dirname -- "$f")"
+  touch -- "$f"
+  echo "$f"
+done

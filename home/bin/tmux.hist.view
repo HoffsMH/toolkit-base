@@ -1,0 +1,8 @@
+#!/bin/bash
+
+set -euo pipefail
+
+tmp=${1:?missing capture path}
+trap 'command rm -f "$tmp"' EXIT
+
+nvim -u "$HOME/.config/nvim/lua/base.lua" -c 'normal G' "$tmp"
