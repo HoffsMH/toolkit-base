@@ -8,3 +8,5 @@ tmux
 mise
 lazygit
 cask ghostty
+git-lfs
+bc

@@ -4,7 +4,6 @@
 #
 alias zource="source ~/.zshrc"
 
-[[ -r "$HOME/.zsh/ytdl.sh" ]] && source "$HOME/.zsh/ytdl.sh"
 
 mov-to-gif() {
     local out="${1%.*}.gif"
@@ -236,7 +235,7 @@ alias be="bundle exec"
 # ######################################################
 #
 random_key() {
-  cat /dev/urandom | tr -dc 'a-zA-Z0-9' | fold -w ${1:-32} | head -n 1
+  LC_ALL=C tr -dc 'a-zA-Z0-9' </dev/urandom | head -c "${1:-32}"; echo
 }
 
 #
@@ -275,7 +274,7 @@ function edit_command {
     nvim "$temp_file" -u "$HOME/.config/nvim/lua/text-editor.lua"
 
     BUFFER=$(<"$temp_file")
-    rm "$temp_file"
+    command rm -f "$temp_file"
     zle reset-prompt
 }
 

@@ -6,3 +6,5 @@ atuin
 tmux
 lazygit
 ghostty
+git-lfs
+bc

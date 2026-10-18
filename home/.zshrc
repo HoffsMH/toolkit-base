@@ -1,3 +1,5 @@
+# One copy of each PATH entry, even in nested shells.
+typeset -U path PATH
 source "$HOME/.zsh/functions_and_aliases.sh"
 
 # Tool init (skip silently if a tool isn't installed)
