@@ -44,8 +44,8 @@ Leaning = current suggestion, not a decision.
     base sets mise `trusted_config_paths = ["~/infra/toolkits"]`.
 
 ## Collisions
-17. xremap: split general.yml (base or keyboard toolkit) from
-    extra.yml (another toolkit); unit passes all files.
+17. xremap: DONE. The xremap toolkit merges /etc/xremap/config.d/*.yml;
+    other toolkits add their own file.
 18. Programs with no include mechanism: single owning toolkit, or
     generate the file in channel 3?
 
