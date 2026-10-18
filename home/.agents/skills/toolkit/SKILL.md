@@ -27,8 +27,8 @@ picture.
    - secrets it needs: reference them (secrets toolkit, KeePass); never
      copy a secret into a toolkit
 2. **Pick or start the toolkit.** One feature per toolkit. New one:
-   `toolkit.new <name>`. Work content goes only in a work toolkit
-   (a work toolkit); base is public on GitHub.
+   `toolkit.new <name>`. Work content goes only in a work toolkit;
+   base is public on GitHub.
 3. **Place each strand in the lowest channel that can hold it.** Files in
    `home/` (or `home-linux/`/`home-darwin/` if only one OS needs it), `/etc`
    files in `root/`, packages in `packages/`, commands in `setup.d/`,
