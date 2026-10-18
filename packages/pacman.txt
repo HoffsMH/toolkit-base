@@ -4,3 +4,4 @@ zsh
 direnv
 atuin
 tmux
+lazygit

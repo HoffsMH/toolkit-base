@@ -2,3 +2,5 @@
 # in (herdr --remote starts its server that way). vi is not installed; keep
 # Omarchy's value in graphical sessions.
 export EDITOR="${EDITOR:-nvim}" VISUAL="${VISUAL:-nvim}"
+# macOS lazygit reads ~/Library/Application Support otherwise.
+export LG_CONFIG_FILE="$HOME/.config/lazygit/config.yml"

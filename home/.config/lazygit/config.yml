@@ -1,0 +1,17 @@
+gui:
+  expandFocusedSidePanel: true
+  nerdFontsVersion: '3'
+  border: 'rounded'
+  theme:
+    selectedLineBgColor:
+      - black
+      - bold
+    selectedRangeBgColor:
+      - green
+      - bold
+git:
+  autoFetch: false
+  diffRenderers:
+    - colorArg: always
+      command: delta --dark --paging=never --syntax-theme=gruvbox-dark
+notARepository: 'skip'
