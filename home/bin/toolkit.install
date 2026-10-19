@@ -8,6 +8,10 @@ set -euo pipefail
 # Setup scripts call base's commands by name; a bare ssh or a first boot may
 # not have ~/bin on PATH yet.
 PATH="$(cd "$(dirname "$0")" && pwd):$HOME/bin:$PATH"
+# Nor Homebrew's, which a non-login shell on macOS lacks.
+for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do
+  if [ "$(uname)" = Darwin ] && [ -x "$b" ]; then eval "$("$b" shellenv)"; break; fi
+done
 
 toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
 name=${1:?usage: toolkit.install <toolkit>}
@@ -32,11 +36,33 @@ pick() {
   done
 }
 
+# A cask installed from the vendor rather than brew counts as installed: its
+# app is in /Applications, or its pkg left a receipt. brew would refuse the
+# app, and would reinstall the pkg over the running one.
+cask_present() {
+  local kind id
+  brew list --cask "$1" >/dev/null 2>&1 && return 0
+  while read -r kind id; do
+    case $kind in
+      app) [ -e "/Applications/$id" ] && return 0 ;;
+      pkg) pkgutil --pkg-info "$id" >/dev/null 2>&1 && return 0 ;;
+    esac
+  done < <(brew info --cask --json=v2 "$1" | jq -r '.casks[].artifacts[]
+    | ((.app? // [])[] | strings | "app \(.)"),
+      ((.uninstall? // [])[] | objects | .pkgutil? // empty | (if type == "array" then .[] else . end) | "pkg \(.)")')
+  return 1
+}
+
 install_packages() {
   local pkgs
   if [ "$(uname)" = Darwin ]; then
+    # Skip what is installed: brew install would upgrade it.
     lines "$tk/packages/brew.txt" | while read -r a b; do
-      if [ "$a" = cask ]; then brew install --cask "$b"; else brew install "$a"; fi
+      if [ "$a" = cask ]; then
+        cask_present "$b" || brew install --cask "$b"
+      else
+        brew list --formula "$a" >/dev/null 2>&1 || brew install "$a"
+      fi
     done
     return
   fi
@@ -62,7 +88,10 @@ install_root_files() {
       echo "toolkit.install: $f fails visudo, not installed" >&2
       return 1
     fi
-    sudo install -D -o root -g root -m "$mode" "$f" "$dst"
+    # No install -D or group "root" on macOS: make the folder first, and use
+    # gid 0 (root on Linux, wheel on macOS).
+    sudo mkdir -p "$(dirname "$dst")"
+    sudo install -o root -g 0 -m "$mode" "$f" "$dst"
     echo "installed $dst"
   done < <(find "$tk/root" -type f -print0)
 }

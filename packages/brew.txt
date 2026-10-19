@@ -10,3 +10,7 @@ lazygit
 cask ghostty
 git-lfs
 bc
+# GNU readlink (greadlink) for links.set and friends
+coreutils
+zsh-autopair
+zsh-fast-syntax-highlighting

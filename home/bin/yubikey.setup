@@ -17,7 +17,10 @@ case "$(/usr/bin/uname)" in
   Darwin)
     command -v brew >/dev/null || { echo "yubikey.setup: needs Homebrew" >&2; exit 1; }
     # macOS has its own smartcard service, so there is no pcscd to enable.
-    brew install gnupg pinentry-mac ykman libfido2
+    # Only what is missing: brew install would upgrade the rest.
+    for p in gnupg pinentry-mac ykman libfido2; do
+      brew list --formula "$p" >/dev/null 2>&1 || brew install "$p"
+    done
     pinentry=/opt/homebrew/bin/pinentry-mac
     ;;
   *)

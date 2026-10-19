@@ -7,6 +7,9 @@
 # root/ is copied, not linked: see root.set.
 set -euo pipefail
 
+# macOS readlink has no -m; Homebrew's coreutils ships GNU's as greadlink.
+if command -v greadlink >/dev/null; then readlink() { greadlink "$@"; }; fi
+
 # usage ok: help on stdout, exit 0. Otherwise a usage error.
 usage() {
   local fd=2 rc=2
@@ -124,7 +127,8 @@ move_aside() {
       moved+=("$t")
       echo "moved aside: ${t#"$HOME"/} -> ${t#"$HOME"/}.pre-toolkit"
     fi
-  done < <(find "$src" -type f -print0)
+  # A toolkit may ship a link too (CLAUDE.md -> AGENTS.md); stow links it like a file.
+  done < <(find "$src" \( -type f -o -type l \) -print0)
 }
 
 restore_dropped() {
@@ -132,7 +136,8 @@ restore_dropped() {
   for ((i = 0; i < ${#dropped[@]}; i += 2)); do
     ln -s "${dropped[i + 1]}" "${dropped[i]}"
   done
-  for t in "${moved[@]}"; do mv "$t.pre-toolkit" "$t"; done
+  # ${a[@]+...}: bash 3.2 (macOS) treats an empty array as unset under set -u.
+  for t in ${moved[@]+"${moved[@]}"}; do mv "$t.pre-toolkit" "$t"; done
 }
 
 os=$(uname | tr '[:upper:]' '[:lower:]')

@@ -1,0 +1,10 @@
+# Mac-specific bindings.
+# Cmd-F emits Ctrl-F so tmux uses the shared C-f prefix.
+keybind = cmd+f=text:\x06
+keybind = cmd+d=text:\x1bd
+keybind = cmd+u=text:\x1bu
+keybind = cmd+enter=text:\x1b\r
+keybind = cmd+y=text:\x1by
+keybind = cmd+e=text:\x1be
+keybind = global:cmd+a=reload_config
+keybind = global:cmd+grave_accent=toggle_quick_terminal

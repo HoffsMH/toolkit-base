@@ -4,6 +4,9 @@
 # it would remove unless given --apply. Never touches other broken links.
 set -euo pipefail
 
+# macOS readlink has no -m; Homebrew's coreutils ships GNU's as greadlink.
+if command -v greadlink >/dev/null; then readlink() { greadlink "$@"; }; fi
+
 apply=false
 case ${1:-} in
   --apply) apply=true ;;
@@ -21,6 +24,7 @@ for o in "${old_dirs[@]}"; do roots+=("$(readlink -m "$o")"); done
 
 n=0
 while IFS= read -r -d '' l; do
+  [ ! -e "$l" ] || continue
   t=$(readlink -m "$l")
   for r in "${roots[@]}"; do
     [[ $t == "$r"/* ]] || continue
@@ -29,6 +33,6 @@ while IFS= read -r -d '' l; do
     break
   done
 done < <(find "$HOME" -xdev \( -path "$HOME/.cache" -o -path "$HOME/.local/share" -o -path "$toolkits_dir" \
-  -o -path "$HOME/old-infra" -o -name node_modules -o -name .git \) -prune -o -xtype l -print0 2>/dev/null)
+  -o -path "$HOME/old-infra" -o -name node_modules -o -name .git \) -prune -o -type l -print0 2>/dev/null)
 
 $apply || [ $n -eq 0 ] || echo "Run ${0##*/} --apply to remove these $n link(s)."

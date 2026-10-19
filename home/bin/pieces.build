@@ -13,6 +13,9 @@
 # kept as OUT.drift-<time> and the difference is shown, so nothing is lost.
 set -euo pipefail
 
+# macOS readlink has no -m; Homebrew's coreutils ships GNU's as greadlink.
+if command -v greadlink >/dev/null; then readlink() { greadlink "$@"; }; fi
+
 usage() { echo "Usage: ${0##*/} OUT DIR" >&2; exit 2; }
 [ $# -eq 2 ] || usage
 out=$1 dir=$2
@@ -67,7 +70,8 @@ if [[ $out == *.json ]]; then
 else
   {
     note "Built by pieces.build from $dir. Edit the pieces, not this file."
-    for p in "${pieces[@]}"; do
+    # ${a[@]+...}: bash 3.2 (macOS) treats an empty array as unset under set -u.
+    for p in ${pieces[@]+"${pieces[@]}"}; do
       printf '\n'
       note "piece: ${p##*/} (toolkit: $(owner "$p"))"
       cat "$p"

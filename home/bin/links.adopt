@@ -5,6 +5,9 @@
 # already ships that path.
 set -euo pipefail
 
+# macOS readlink has no -m; Homebrew's coreutils ships GNU's as greadlink.
+if command -v greadlink >/dev/null; then readlink() { greadlink "$@"; }; fi
+
 usage() { printf 'Usage: %s [-n] [-o] TOOLKIT FILE\n  -n  dry run\n  -o  this OS only (home-linux/ or home-darwin/)\n' "${0##*/}" >&"${1:-2}"; exit "${2:-2}"; }
 dry_run=false os_only=false
 while getopts noh opt; do

@@ -4,6 +4,9 @@
 # program edited them, and files links.set or pieces.build set aside.
 set -euo pipefail
 
+# macOS readlink has no -m; Homebrew's coreutils ships GNU's as greadlink.
+if command -v greadlink >/dev/null; then readlink() { greadlink "$@"; }; fi
+
 case ${1:-} in
   -h | --help)
     printf 'Usage: %s\n\nReport toolkit links, broken links, old-layout links and leftovers in ~.\n' "${0##*/}"
@@ -25,14 +28,13 @@ home_find() {
     -o "$@" -print0 2>/dev/null
 }
 
-declare -A per_kit=()
-broken=() old=()
+kits=() broken=() old=()
 while IFS= read -r -d '' l; do
   t=$(readlink -m "$l")
   rel=${l#"$HOME"/}
   if [[ $t == "$toolkits_dir"/* ]]; then
     kit=${t#"$toolkits_dir"/}; kit=${kit%%/*}
-    if [ -e "$l" ]; then per_kit[$kit]=$((${per_kit[$kit]:-0} + 1)); else broken+=("$rel -> $(readlink "$l")"); fi
+    if [ -e "$l" ]; then kits+=("$kit"); else broken+=("$rel -> $(readlink "$l")"); fi
     continue
   fi
   for o in "${old_dirs[@]}"; do
@@ -47,8 +49,10 @@ leftovers=()
 while IFS= read -r -d '' f; do leftovers+=("${f#"$HOME"/}"); done < <(home_find \( -name '*.pre-toolkit' -o -name '*.drift-*' \))
 
 echo "== links per toolkit"
-if [ ${#per_kit[@]} -eq 0 ]; then echo "  (none)"; fi
-for k in $(printf '%s\n' "${!per_kit[@]}" | sort); do printf '  %-20s %d\n' "$k" "${per_kit[$k]}"; done
+# A list and uniq -c, not an associative array: macOS bash 3.2 has none.
+if [ ${#kits[@]} -eq 0 ]; then echo "  (none)"; else
+  printf '%s\n' "${kits[@]}" | sort | uniq -c | while read -r n k; do printf '  %-20s %d\n' "$k" "$n"; done
+fi
 
 echo "== broken links into toolkits or the old layout (links.prune removes them)"
 if [ ${#broken[@]} -eq 0 ]; then echo "  (none)"; else printf '  %s\n' "${broken[@]}"; fi
