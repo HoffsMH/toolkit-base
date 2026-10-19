@@ -21,7 +21,7 @@ Where they live
     get it before any auth exists. Every other toolkit is private and
     cloned from closet over the tailnet:
       git clone git@closet:toolkits/<name>.git ~/infra/toolkits/<name>
-  - What exists: `ssh closet ls /mnt/app-data/git/toolkits`. The first line
+  - What exists: `ssh closet ls /mnt/state/git/toolkits`. The first line
     of each README is a one-line summary.
 
 ## Properties every toolkit must have

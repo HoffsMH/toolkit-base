@@ -6,7 +6,7 @@ set -euo pipefail
 name=$1
 dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}/$name
 remote=${TOOLKIT_REMOTE_HOST:-closet}
-repo=/mnt/app-data/git/toolkits/$name.git
+repo=/mnt/state/git/toolkits/$name.git
 
 mkdir -p "$dir"
 [ -d "$dir/.git" ] || git -C "$dir" init -q -b master

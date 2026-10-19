@@ -10,7 +10,7 @@
   pieces.build").
 - How toolkits work and how to change them: the `toolkit` skill, and
   `~/infra/toolkits/base/README.md`.
-- Available toolkits: `ssh closet ls /mnt/app-data/git/toolkits`.
+- Available toolkits: `ssh closet ls /mnt/state/git/toolkits`.
 
 ## Keyboard
 
