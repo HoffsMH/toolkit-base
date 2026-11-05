@@ -22,13 +22,17 @@ say() { printf '\n== %s: %s\n' "$name" "$*"; }
 
 lines() { [ -f "$1" ] && grep -v '^\s*\(#\|$\)' "$1" || true; }
 
-# "a|b" in a package list: any one of them will do. Skip the line when one is
+# Installed packages are skipped, so a run with nothing to install needs no
+# sudo. "a|b" in a package list: any one of them will do. Skip the line when one is
 # installed (a machine may already have the other build of the same thing),
 # else install the first.
 pick() {
   local line alt
   while read -r line; do
-    [[ $line == *"|"* ]] || { echo "$line"; continue; }
+    [[ $line == *"|"* ]] || {
+      pacman -Qq "$line" >/dev/null 2>&1 || echo "$line"
+      continue
+    }
     for alt in ${line//|/ }; do
       pacman -Qq "$alt" >/dev/null 2>&1 && continue 2
     done
