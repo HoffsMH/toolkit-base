@@ -22,6 +22,17 @@
 - Layering: xremap, then ghostty, then herdr or tmux. A key xremap remaps
   never reaches the layers after it.
 
+## shp
+
+- `shp` means an agent session (usually Claude Code) plus the herdr pane
+  it runs in. Treat the two as one unit.
+- "Close this shp": close your own herdr pane (`herdr pane current`, then
+  `herdr pane close`), which also ends this session. Do it last.
+- "The shp on office where I am installing X": find it with
+  `herdr agent list` on that machine (`ssh office` if not local), pick the
+  one whose output matches the task, and read it with `herdr agent read`.
+  Reading is fine; ask before sending it keys or prompts.
+
 ## Shell
 
 - Commands run in `bash`, but the interactive shell is `zsh` where all
