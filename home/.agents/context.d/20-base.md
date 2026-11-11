@@ -22,6 +22,14 @@
 - Layering: xremap, then ghostty, then herdr or tmux. A key xremap remaps
   never reaches the layers after it.
 
+## Syncing toolkit changes
+
+- Just finished changing an existing toolkit that lives on more than one
+  machine? Offer "Commit, push and sync?" and, on a yes, follow the
+  `toolkit-sync` skill.
+- A brand-new toolkit is different: offer only commit and push to closet
+  for safekeeping.
+
 ## shp
 
 - `shp` means an agent session (usually Claude Code) plus the herdr pane
