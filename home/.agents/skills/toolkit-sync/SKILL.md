@@ -43,7 +43,11 @@ with `export PATH=$HOME/bin:$HOME/.local/bin:$PATH;`.
    must be empty and `git rev-list --count @{upstream}..HEAD` must be 0.
    Otherwise skip and report what is there; do not stash, rebase or reset.
 3. Get the new commits there:
-   - base is cloned over https: `git pull --ff-only` works anonymously.
+   - base: its remote is ssh to GitHub, which also needs the YubiKey.
+     The repo is public, so fetch anonymously into the tracking ref:
+     `git fetch https://github.com/<owner>/<repo>.git
+     +<branch>:refs/remotes/origin/<branch>`, check nothing is ahead,
+     then `git merge --ff-only origin/<branch>`.
    - Kits on closet: the target's own ssh to `git@closet` needs a YubiKey
      that is not there, and `ssh -A` does not help. Relay from here as
      the normal user instead: `git push <target>:infra/toolkits/<kit>
@@ -52,8 +56,9 @@ with `export PATH=$HOME/bin:$HOME/.local/bin:$PATH;`.
      ref matching closet.
 4. Install: `toolkit.install <kit>` on the target. Run it twice only if
    the first run reported changes you did not expect.
-5. Anything that wants sudo and `sudo -n` refuses: stop on that host and
-   report it; the user runs it.
+5. `toolkit.install` stops at its packages step when sudo wants a
+   password. Run `links.set <kit>` there instead (links and rebuilds
+   pieces, no root), and report that the full install is still owed.
 
 ## 4. Report
 One line per machine: synced (old..new sha), skipped (why), not cloned,
