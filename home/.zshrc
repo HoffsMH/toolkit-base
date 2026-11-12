@@ -53,6 +53,8 @@ bindkey '^g' edit_command
 bindkey -r '^V'
 
 command -v fastfetch >/dev/null && fastfetch
+# One line when toolkits need attention. Reads a cache; never waits on the network.
+[[ -x ~/bin/toolkit.status ]] && ~/bin/toolkit.status
 
 # Pieces shipped by other toolkits, in name order. (N): no error when empty.
 for f in ~/.zsh/rc.d/*.zsh(N); do source "$f"; done

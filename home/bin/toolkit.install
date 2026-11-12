@@ -118,6 +118,16 @@ for s in "$tk"/verify.d/*.sh; do
   bash "$s" || verify_failed=1
 done
 
+# What was installed: commit and tree. toolkit.status compares the tree with
+# HEAD's to spot a kit pulled but not installed. No time, so a rerun
+# rewrites the same bytes.
+if head=$(git -C "$tk" rev-parse -q --verify HEAD 2>/dev/null); then
+  stamps=${XDG_STATE_HOME:-$HOME/.local/state}/toolkits
+  mkdir -p "$stamps"
+  printf '%s %s\n' "$head" "$(git -C "$tk" rev-parse 'HEAD^{tree}')" >"$stamps/$name.installed"
+  "$(dirname "$0")/toolkit.status" --local >/dev/null 2>&1 || true
+fi
+
 if [ -f "$tk/NEXT.txt" ]; then
   printf '\n'
   cat "$tk/NEXT.txt"

@@ -1,0 +1,165 @@
+#!/usr/bin/env bash
+# One line naming the toolkits that need attention: behind or ahead of
+# their remote, or changed since toolkit.install last ran. Silent when all
+# is well.
+#   toolkit.status          print the cached line; when it is older than
+#                           TOOLKIT_STATUS_TTL minutes (180), refresh it in
+#                           the background for the next call
+#   toolkit.status --agent  the same, worded for an agent's session context
+#   toolkit.status --fetch  fetch remote heads, then recompute and print
+#   toolkit.status --local  recompute from heads already fetched
+#   toolkit.status -v       --local, one line per kit
+#   toolkit.status --kits   kits toolkit.update would act on
+# Remote heads never come from git over ssh, which may want a YubiKey
+# touch. Kits cloned over https use git ls-remote. For the rest, the git
+# host publishes each kit's head, then its first-parent ancestors, at
+# TOOLKIT_HEADS_URL (@HOST@: the remote's host, @NAME@: the repo name).
+# Only kits cloned here are asked about.
+set -uo pipefail
+
+toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
+state=${XDG_STATE_HOME:-$HOME/.local/state}/toolkits
+cache=${XDG_CACHE_HOME:-$HOME/.cache}/toolkits
+ttl=${TOOLKIT_STATUS_TTL:-180}
+heads_url=${TOOLKIT_HEADS_URL:-http://@HOST@:8099/toolkits/@NAME@.sha}
+line_file=$cache/status
+
+kits() {
+  local d
+  for d in "$toolkits_dir"/*/; do
+    d=${d%/}
+    [ -e "$d/.git" ] && echo "${d##*/}"
+  done
+  return 0
+}
+
+fetch_one() {
+  local kit=$1 url host name u out=$cache/heads/$1
+  # The configured URL, before any insteadOf rewrite.
+  url=$(git -C "$toolkits_dir/$kit" config remote.origin.url) || return 0
+  # GitHub serves public repos over anonymous https.
+  case $url in git@github.com:*) url=https://github.com/${url#git@github.com:} ;; esac
+  case $url in
+    https://*)
+      GIT_TERMINAL_PROMPT=0 git -c credential.helper= -c http.lowSpeedLimit=1 \
+        -c http.lowSpeedTime=10 ls-remote "$url" HEAD 2>/dev/null |
+        awk 'NR == 1 { print $1 }' >"$out.tmp" ;;
+    *)
+      # git@host:path or ssh://[user@]host[:port]/path
+      host=${url#ssh://}
+      host=${host#*@}
+      host=${host%%[:/]*}
+      name=${url##*/}
+      name=${name%.git}
+      u=${heads_url//@HOST@/$host}
+      u=${u//@NAME@/$name}
+      curl -fsS --max-time 5 "$u" >"$out.tmp" 2>/dev/null ;;
+  esac
+  # A failed fetch keeps the last known head.
+  if [ -s "$out.tmp" ]; then mv -f "$out.tmp" "$out"; else rm -f "$out.tmp"; fi
+}
+
+fetch_all() {
+  local k
+  mkdir -p "$cache/heads"
+  for k in $(kits); do fetch_one "$k" & done
+  wait
+}
+
+# One record per kit that needs attention: kit, behind, ahead, install.
+# behind is "?" when the remote moved past anything this clone has.
+records() {
+  local kit dir heads stamp head behind ahead inst
+  for kit in $(kits); do
+    dir=$toolkits_dir/$kit heads=$cache/heads/$kit stamp=$state/$kit.installed
+    head=$(git -C "$dir" rev-parse -q --verify HEAD) || continue
+    behind=0 ahead=0 inst=ok
+    if [ -s "$heads" ] && [ "$(head -n1 "$heads")" != "$head" ]; then
+      # The place in the remote list of the first commit this clone also
+      # has is how far behind it is.
+      behind=$(git -C "$dir" rev-list --first-parent --max-count=1000 HEAD |
+        awk 'NR == FNR { have[$1]; next }
+             ($1 in have) { print FNR - 1; found = 1; exit }
+             END { if (!found) print "?" }' - "$heads")
+    fi
+    # Unpushed: against the remote-tracking branch, which a pull updates.
+    ahead=$(git -C "$dir" rev-list --count '@{upstream}..HEAD' 2>/dev/null) || ahead=0
+    if [ ! -f "$stamp" ]; then
+      inst=never
+    elif [ "$(cut -d' ' -f2 "$stamp")" != "$(git -C "$dir" rev-parse 'HEAD^{tree}')" ]; then
+      inst=stale
+    fi
+    [ "$behind" = 0 ] && [ "$ahead" = 0 ] && [ $inst = ok ] && continue
+    echo "$kit $behind $ahead $inst"
+  done
+}
+
+describe() { # kit behind ahead inst -> "kit 2 behind and pulled but not installed"
+  local d=""
+  case $2 in 0) ;; '?') d=" behind" ;; *) d=" $2 behind" ;; esac
+  [ "$3" = 0 ] || d="$d${d:+ and} $3 ahead"
+  case $4 in
+    never) d="$d${d:+ and} not installed" ;;
+    stale) d="$d${d:+ and} pulled but not installed" ;;
+  esac
+  echo "$1$d"
+}
+
+# The whole line. Past 5 kits, counts instead of names.
+summarize() {
+  local recs n
+  recs=$(records)
+  [ -n "$recs" ] || return 0
+  n=$(printf '%s\n' "$recs" | wc -l | tr -d ' ')
+  if [ "$n" -le 5 ]; then
+    printf 'toolkits: %s\n' "$(printf '%s\n' "$recs" |
+      while read -r k b a i; do describe "$k" "$b" "$a" "$i"; done |
+      awk '{ printf "%s%s", (NR > 1 ? ", " : ""), $0 }')"
+  else
+    printf '%s\n' "$recs" | awk '
+      $2 != "0" { b++ } $3 != "0" { a++ } $4 == "never" { n++ } $4 == "stale" { s++ }
+      END {
+        out = ""
+        if (b) out = out ", " b " behind"
+        if (a) out = out ", " a " ahead"
+        if (s) out = out ", " s " pulled but not installed"
+        if (n) out = out ", " n " not installed"
+        print "toolkits:" substr(out, 2) " (toolkit.status -v)"
+      }'
+  fi
+}
+
+recompute() {
+  local tmp
+  mkdir -p "$cache"
+  tmp=$(mktemp "$cache/.status.XXXXXX")
+  summarize >"$tmp"
+  mv -f "$tmp" "$line_file"
+  cat "$line_file"
+}
+
+cached() {
+  # Stale or missing: touch first so other shells do not refresh too.
+  if [ -z "$(find "$line_file" -mmin "-$ttl" 2>/dev/null)" ]; then
+    mkdir -p "$cache"
+    touch "$line_file"
+    nohup "$0" --fetch </dev/null >/dev/null 2>&1 &
+  fi
+  [ -s "$line_file" ] || return 0
+  if [ "${1:-}" = agent ]; then
+    printf '%s. Tell the user; toolkit.update fixes it (it may need sudo and a YubiKey touch, so do not run it unasked).\n' \
+      "$(cat "$line_file")"
+  else
+    cat "$line_file"
+  fi
+}
+
+case ${1:-} in
+  "") cached ;;
+  --agent) cached agent ;;
+  --fetch) fetch_all; recompute ;;
+  --local) recompute ;;
+  -v) records | while read -r k b a i; do describe "$k" "$b" "$a" "$i"; done ;;
+  --kits) records | awk '$2 != "0" || $4 != "ok" { print $1 }' ;;
+  *) sed -n '2,/^set /{/^set /d;s/^# \{0,1\}//;p;}' "$0" >&2; exit 2 ;;
+esac

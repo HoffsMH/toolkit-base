@@ -1,0 +1,39 @@
+#!/usr/bin/env bash
+# Bring toolkits up to date: pull (fast-forward only) the ones behind their
+# remote, then toolkit.install the ones whose tree differs from the last
+# install. With no names, act on what toolkit.status flags. base goes
+# first: other kits' setup and hooks call its commands.
+set -uo pipefail
+bin=$(cd "$(dirname "$0")" && pwd)
+toolkits_dir=${TOOLKITS_DIR:-$HOME/infra/toolkits}
+state=${XDG_STATE_HOME:-$HOME/.local/state}/toolkits
+
+"$bin/toolkit.status" --fetch >/dev/null
+if [ $# -gt 0 ]; then
+  pull_all=1
+else
+  pull_all=0
+  # shellcheck disable=SC2046
+  set -- $("$bin/toolkit.status" --kits)
+fi
+[ $# -gt 0 ] || { echo "toolkits: all up to date"; exit 0; }
+kits=$(printf '%s\n' "$@" | awk '$0 == "base" { print; next } { rest = rest $0 "\n" } END { printf "%s", rest }')
+behind=" $("$bin/toolkit.status" -v | awk '/ behind/ { printf "%s ", $1 }')"
+
+failed=""
+for kit in $kits; do
+  dir=$toolkits_dir/$kit
+  [ -e "$dir/.git" ] || { echo "toolkit.update: no $dir" >&2; failed="$failed $kit"; continue; }
+  if [ $pull_all = 1 ] || [[ $behind == *" $kit "* ]]; then
+    printf '\n== %s: pull\n' "$kit"
+    git -C "$dir" pull --ff-only || { failed="$failed $kit"; continue; }
+  fi
+  tree=$(git -C "$dir" rev-parse 'HEAD^{tree}')
+  if [ "$(cut -d' ' -f2 "$state/$kit.installed" 2>/dev/null)" != "$tree" ]; then
+    "$bin/toolkit.install" "$kit" || failed="$failed $kit"
+  fi
+done
+
+printf '\n'
+"$bin/toolkit.status" --local
+[ -z "$failed" ] || { echo "toolkit.update: failed:$failed" >&2; exit 1; }

@@ -85,6 +85,14 @@ can't do the job.
     link it back (-o: this OS only).
   - `pieces.build OUT DIR`: build one file from the pieces in DIR.
   - `toolkit.new <name>`: start a private toolkit, with its repo on closet.
+  - `toolkit.status [-v|--fetch]`: one line on kits behind or ahead of
+    their remote, or pulled but not installed. Shell start and agent
+    session start print it from a cache refreshed in the background every
+    3 hours. Remote heads come from anonymous https, or from a file the
+    git host publishes per kit on push ($TOOLKIT_HEADS_URL), never from
+    ssh, so the check never asks for a YubiKey.
+  - `toolkit.update [name...]`: pull (fast-forward only) and install the
+    kits toolkit.status flags, or the named ones.
 
 ## Building a file from pieces
 Some programs have no include mechanism, or rewrite their own config:
@@ -120,6 +128,11 @@ follows the toolkits that are linked right now.
     toolkit. Imports in linked files use absolute (~/...) paths.
   - **stow treats absolute links as foreign.** links.set drops an absolute
     link that already points at the toolkit's file so stow can relink it.
+
+## Install stamp
+Each install writes ~/.local/state/toolkits/<toolkit>.installed: the
+commit and tree it installed. A tree that differs from HEAD's is "pulled
+but not installed".
 
 ## Install log and uninstall (planned)
 Each install appends to ~/.local/state/toolkits/<toolkit>.log: path,
